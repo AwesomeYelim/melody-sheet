@@ -1,0 +1,8 @@
+fastapi==0.104.1
+uvicorn==0.29.0
+pydantic==2.5.3
+python-multipart==0.0.9
+basic-pitch==0.3.2
+music21==8.3.0
+numpy==1.26.4
+soundfile==0.12.1
