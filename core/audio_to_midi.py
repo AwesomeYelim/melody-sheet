@@ -1,10 +1,15 @@
 import os
+import subprocess
+import tempfile
 import numpy as np
 import librosa
 import torchcrepe
 import torch
+import torchaudio
+import torchaudio.transforms as T
 import noisereduce as nr
 import pretty_midi
+import imageio_ffmpeg
 
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -15,6 +20,37 @@ MIN_NOTE_DURATION    = 0.08   # 최소 음표 길이 (초) — 너무 짧은 노
 CREPE_STEP_MS        = 10     # CREPE 분석 단위 (ms)
 MIDI_MIN             = 36     # C2
 MIDI_MAX             = 84     # C6 (허밍 범위)
+
+
+# ── 오디오 로드 (포맷 자동 처리) ─────────────────────────
+def _load_audio(path: str, target_sr: int = 16000):
+    """
+    WAV/FLAC/OGG → torchaudio 직접 로드
+    MP3/M4A/AAC 등 → imageio-ffmpeg으로 WAV 변환 후 로드
+    """
+    try:
+        waveform, sr = torchaudio.load(path)
+    except Exception:
+        # ffmpeg으로 임시 WAV 변환
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-i", path, "-ar", str(target_sr), "-ac", "1", tmp.name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            waveform, sr = torchaudio.load(tmp.name)
+        finally:
+            os.unlink(tmp.name)
+
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    if sr != target_sr:
+        waveform = T.Resample(orig_freq=sr, new_freq=target_sr)(waveform)
+        sr = target_sr
+    return waveform.squeeze(0).numpy(), sr
 
 
 # ── 유틸 ──────────────────────────────────────────────────
@@ -53,8 +89,8 @@ def convert_audio_to_midi(audio_path: str) -> str:
     """
     print(f"[AMT] 분석 시작: {audio_path}")
 
-    # ── 1. 오디오 로드 (16kHz mono) ─────────────────────────
-    audio, sr = librosa.load(audio_path, sr=16000, mono=True)
+    # ── 1. 오디오 로드 (WAV/MP3/M4A/FLAC 등 자동 처리) ──────
+    audio, sr = _load_audio(audio_path)
     print(f"[AMT] 로드 완료: {len(audio)/sr:.1f}초")
 
     # ── 2. 노이즈 제거 ───────────────────────────────────────
@@ -80,7 +116,7 @@ def convert_audio_to_midi(audio_path: str) -> str:
         hop_length=hop_length,
         fmin=32.7,    # C1
         fmax=1975.5,  # B6
-        model="full",
+        model="tiny",
         decoder=torchcrepe.decode.viterbi,   # Viterbi: 피치 급변 스무딩
         device="cpu",
         return_periodicity=True,

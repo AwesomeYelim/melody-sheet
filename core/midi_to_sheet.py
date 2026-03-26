@@ -4,6 +4,34 @@ import music21
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# quarterLength → 표준 duration type 매핑 (내림차순)
+_QL_TO_TYPE = [
+    (4.0, "whole"),
+    (3.0, "half"),       # 점2분음표 → 2분음표로 근사
+    (2.0, "half"),
+    (1.5, "quarter"),    # 점4분음표 → 4분음표로 근사
+    (1.0, "quarter"),
+    (0.75, "eighth"),
+    (0.5, "eighth"),
+    (0.375, "16th"),
+    (0.25, "16th"),
+    (0.125, "32nd"),
+]
+
+def _resolve_duration(element) -> str:
+    """
+    music21 duration type이 'complex'이면 quarterLength 기준으로 가장 가까운
+    표준 음표 길이로 변환합니다.
+    """
+    dtype = element.duration.type
+    if dtype != "complex":
+        return dtype
+    ql = float(element.duration.quarterLength)
+    for threshold, name in _QL_TO_TYPE:
+        if ql >= threshold:
+            return name
+    return "32nd"
+
 
 def midi_to_musicxml(midi_path: str) -> str:
     """
@@ -39,14 +67,14 @@ def midi_to_note_list(midi_path: str) -> list:
     for element in score.flat.notesAndRests:
         if isinstance(element, music21.note.Note):
             notes.append({
-                "pitch": element.nameWithOctave,       # 예: "C4", "G#3"
-                "duration": element.duration.type,     # 예: "quarter", "eighth"
-                "start_time": float(element.offset),   # 마디 내 시작 위치
+                "pitch": element.nameWithOctave,
+                "duration": _resolve_duration(element),
+                "start_time": float(element.offset),
             })
         elif isinstance(element, music21.note.Rest):
             notes.append({
                 "pitch": "rest",
-                "duration": element.duration.type,
+                "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
 

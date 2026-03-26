@@ -1,5 +1,6 @@
 import os
 import music21
+from core.midi_to_sheet import _resolve_duration
 
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -55,13 +56,13 @@ def transpose_midi(midi_path: str, target_key: str) -> dict:
         if isinstance(element, music21.note.Note):
             notes.append({
                 "pitch": element.nameWithOctave,
-                "duration": element.duration.type,
+                "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
         elif isinstance(element, music21.note.Rest):
             notes.append({
                 "pitch": "rest",
-                "duration": element.duration.type,
+                "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
 

@@ -8,12 +8,13 @@ import { Audio } from "expo-av";
 import axios from "axios";
 import { API_URL } from "../config";
 import NoteList from "../components/NoteList";
+import SheetMusic from "../components/SheetMusic";
 
 export default function AudioToSheetScreen() {
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState([]);
-  const [midiFile, setMidiFile] = useState(null);
   const [fileName, setFileName] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   // 녹음 관련 상태
   const [isRecording, setIsRecording] = useState(false);
@@ -33,18 +34,18 @@ export default function AudioToSheetScreen() {
   async function handlePickFile() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ["audio/mpeg", "audio/wav", "audio/*"],
+        type: ["audio/*"],
       });
       if (result.canceled) return;
 
       const asset = result.assets[0];
       setFileName(asset.name);
 
-      // 웹: asset.file이 native File 객체로 존재
-      // 모바일: uri/name/type 객체 사용
       if (asset.file) {
+        // 웹: native File 객체를 그대로 전달
         await sendToApi(asset.file);
       } else {
+        // 모바일: uri/name/type 구조로 전달
         await sendToApi({
           uri: asset.uri,
           name: asset.name,
@@ -78,7 +79,7 @@ export default function AudioToSheetScreen() {
       setIsRecording(true);
       setRecordSeconds(0);
       setNotes([]);
-      setMidiFile(null);
+      setErrorMsg(null);
       setFileName(null);
 
       timerRef.current = setInterval(() => {
@@ -113,23 +114,30 @@ export default function AudioToSheetScreen() {
   }
 
   // ── API 전송 (공통) ────────────────────────────────────
-  async function sendToApi({ uri, name, type }) {
+  // fileOrObj: 웹은 native File 객체, 모바일은 { uri, name, type }
+  async function sendToApi(fileOrObj) {
     setLoading(true);
     setNotes([]);
-    setMidiFile(null);
+    setErrorMsg(null);
     try {
       const formData = new FormData();
-      formData.append("file", { uri, name, type });
+      formData.append("file", fileOrObj);
 
-      const response = await axios.post(`${API_URL}/api/audio-to-sheet`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 60000,
+      const res = await fetch(`${API_URL}/api/audio-to-sheet`, {
+        method: "POST",
+        body: formData,
       });
 
-      setNotes(response.data.notes);
-      setMidiFile(response.data.midi_file);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `서버 오류 ${res.status}`);
+      }
+
+      const data = await res.json();
+      setNotes(data.notes);
     } catch (error) {
-      Alert.alert("오류", error.message || "분석 중 오류가 발생했습니다.");
+      const msg = error.response?.data?.detail || error.message || "분석 중 오류가 발생했습니다.";
+      setErrorMsg(msg);
     } finally {
       setLoading(false);
     }
@@ -187,6 +195,12 @@ export default function AudioToSheetScreen() {
         <Text style={styles.fileLabel}>파일: {fileName}</Text>
       )}
 
+      {errorMsg && (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>오류: {errorMsg}</Text>
+        </View>
+      )}
+
       {loading && (
         <View style={styles.loadingBox}>
           <ActivityIndicator size="large" color="#4F8EF7" />
@@ -197,10 +211,8 @@ export default function AudioToSheetScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
+          <SheetMusic notes={notes} filename={fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music"} />
           <NoteList notes={notes} />
-          {midiFile && (
-            <Text style={styles.midiLabel}>MIDI 파일: {midiFile}</Text>
-          )}
         </View>
       )}
     </ScrollView>
@@ -269,6 +281,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#555",
   },
+  errorBox: {
+    marginTop: 16,
+    backgroundColor: "#fff0f0",
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#ffcccc",
+  },
+  errorText: {
+    color: "#cc0000",
+    fontSize: 13,
+  },
   loadingBox: {
     marginTop: 40,
     alignItems: "center",
@@ -286,10 +310,5 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1a1a2e",
     marginBottom: 8,
-  },
-  midiLabel: {
-    marginTop: 16,
-    fontSize: 12,
-    color: "#888",
   },
 });

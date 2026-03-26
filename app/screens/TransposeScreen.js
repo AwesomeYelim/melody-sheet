@@ -7,6 +7,7 @@ import * as DocumentPicker from "expo-document-picker";
 import axios from "axios";
 import { API_URL } from "../config";
 import NoteList from "../components/NoteList";
+import SheetMusic from "../components/SheetMusic";
 
 const KEYS = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"];
 
@@ -40,7 +41,6 @@ export default function TransposeScreen() {
       formData.append("target_key", selectedKey);
 
       const response = await axios.post(`${API_URL}/api/transpose`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
         timeout: 30000,
       });
 
@@ -102,6 +102,10 @@ export default function TransposeScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>변조된 음표 ({notes.length}개)</Text>
+          <SheetMusic
+            notes={notes}
+            filename={fileName ? `${fileName.replace(/\.[^.]+$/, "")}_${resultInfo?.targetKey ?? ""}` : "sheet_music"}
+          />
           <NoteList notes={notes} />
         </View>
       )}

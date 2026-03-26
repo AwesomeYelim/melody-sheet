@@ -1,7 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import os
 import shutil
+import time
 
 from core.audio_to_midi import convert_audio_to_midi
 from core.midi_to_sheet import midi_to_note_list
@@ -12,8 +15,15 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/")
+
+@app.get("/health")
 def read_root():
     return {"message": "Melody Sheet API is running."}
 
@@ -34,8 +44,10 @@ async def audio_to_sheet(file: UploadFile = File(...)):
         ]
     }
     """
-    # 1. 파일 저장
-    upload_path = os.path.join(UPLOAD_DIR, file.filename)
+    # 1. 파일 저장 (한글 파일명 ffmpeg 오류 방지 → ASCII 이름 사용)
+    ext = os.path.splitext(file.filename)[1] or ".m4a"
+    safe_name = f"upload_{int(time.time() * 1000)}{ext}"
+    upload_path = os.path.join(UPLOAD_DIR, safe_name)
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -64,8 +76,10 @@ async def transpose(
 
     target_key 예시: "G", "Bb", "F#"
     """
-    # 1. 파일 저장
-    upload_path = os.path.join(UPLOAD_DIR, file.filename)
+    # 1. 파일 저장 (한글 파일명 ffmpeg 오류 방지 → ASCII 이름 사용)
+    ext = os.path.splitext(file.filename)[1] or ".mid"
+    safe_name = f"upload_{int(time.time() * 1000)}{ext}"
+    upload_path = os.path.join(UPLOAD_DIR, safe_name)
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -96,6 +110,20 @@ def download_file(filename: str):
     return FileResponse(file_path, media_type="audio/midi", filename=filename)
 
 
+# ── 앱 정적 파일 서빙 (빌드된 Expo 웹앱) ─────────────────
+WEB_DIST = os.path.join(os.path.dirname(__file__), "app", "dist")
+if os.path.isdir(WEB_DIST):
+    # JS/CSS 번들 등 정적 자산 마운트
+    _expo_dir = os.path.join(WEB_DIST, "_expo")
+    if os.path.isdir(_expo_dir):
+        app.mount("/_expo", StaticFiles(directory=_expo_dir), name="expo-assets")
+
+    # 그 외 모든 GET 요청 → index.html (SPA 폴백)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        index = os.path.join(WEB_DIST, "index.html")
+        return FileResponse(index)
+
 # 실행 방법:
 # cd C:\Users\User\Desktop\yelim\melody-sheet
-# uvicorn main:app --reload
+# uvicorn main:app --host 0.0.0.0 --port 8000
