@@ -13,8 +13,19 @@ import SheetMusic from "../components/SheetMusic";
 export default function AudioToSheetScreen() {
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState([]);
+  const [chords, setChords] = useState([]);
+  const [selectedKey, setSelectedKey] = useState("auto");
+  const [detectedKey, setDetectedKey] = useState(null);
   const [fileName, setFileName] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const KEY_OPTIONS = [
+    "auto",
+    "C", "G", "D", "A", "E", "B", "F#",
+    "F", "Bb", "Eb", "Ab", "Db",
+    "Am", "Em", "Bm", "F#m", "C#m",
+    "Dm", "Gm", "Cm",
+  ];
 
   // 녹음 관련 상태
   const [isRecording, setIsRecording] = useState(false);
@@ -118,10 +129,12 @@ export default function AudioToSheetScreen() {
   async function sendToApi(fileOrObj) {
     setLoading(true);
     setNotes([]);
+    setChords([]);
     setErrorMsg(null);
     try {
       const formData = new FormData();
       formData.append("file", fileOrObj);
+      if (selectedKey !== "auto") formData.append("key", selectedKey);
 
       const res = await fetch(`${API_URL}/api/audio-to-sheet`, {
         method: "POST",
@@ -135,6 +148,8 @@ export default function AudioToSheetScreen() {
 
       const data = await res.json();
       setNotes(data.notes);
+      setChords(data.chords || []);
+      setDetectedKey(data.detected_key || null);
     } catch (error) {
       const msg = error.response?.data?.detail || error.message || "분석 중 오류가 발생했습니다.";
       setErrorMsg(msg);
@@ -195,6 +210,30 @@ export default function AudioToSheetScreen() {
         <Text style={styles.fileLabel}>파일: {fileName}</Text>
       )}
 
+      {/* Key 선택 */}
+      {!isRecording && (
+        <View style={styles.keyRow}>
+          <Text style={styles.keyLabel}>Key</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.keyScroll}>
+            {KEY_OPTIONS.map((k) => (
+              <TouchableOpacity
+                key={k}
+                style={[styles.keyChip, selectedKey === k && styles.keyChipActive]}
+                onPress={() => setSelectedKey(k)}
+              >
+                <Text style={[styles.keyChipText, selectedKey === k && styles.keyChipTextActive]}>
+                  {k === "auto" ? "자동" : k}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {detectedKey && selectedKey === "auto" && (
+        <Text style={styles.detectedKeyLabel}>감지된 키: {detectedKey}</Text>
+      )}
+
       {errorMsg && (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>오류: {errorMsg}</Text>
@@ -211,7 +250,7 @@ export default function AudioToSheetScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
-          <SheetMusic notes={notes} filename={fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music"} />
+          <SheetMusic notes={notes} chords={chords} filename={fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music"} />
           <NoteList notes={notes} />
         </View>
       )}
@@ -280,6 +319,40 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontSize: 13,
     color: "#555",
+  },
+  keyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  keyLabel: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: "#555",
+    marginRight: 8,
+    minWidth: 28,
+  },
+  keyScroll: { flexGrow: 1 },
+  keyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#ccc",
+    marginRight: 6,
+    backgroundColor: "#fff",
+  },
+  keyChipActive: {
+    backgroundColor: "#4F8EF7",
+    borderColor: "#4F8EF7",
+  },
+  keyChipText: { fontSize: 12, color: "#555" },
+  keyChipTextActive: { color: "#fff", fontWeight: "bold" },
+  detectedKeyLabel: {
+    fontSize: 12,
+    color: "#4F8EF7",
+    marginBottom: 6,
   },
   errorBox: {
     marginTop: 16,

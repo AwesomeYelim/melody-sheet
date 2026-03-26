@@ -6,9 +6,10 @@ import os
 import shutil
 import time
 
-from core.audio_to_midi import convert_audio_to_midi
+from core.audio_to_midi import convert_audio_to_midi, _load_audio
 from core.midi_to_sheet import midi_to_note_list
 from core.transposer import transpose_midi
+from core.chord_detector import detect_chords
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -32,7 +33,7 @@ def read_root():
 # 기능 1: 오디오 → 악보 (음표 JSON 반환)
 # --------------------------------------------------
 @app.post("/api/audio-to-sheet")
-async def audio_to_sheet(file: UploadFile = File(...)):
+async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
     """
     오디오 파일(MP3/WAV)을 업로드하면 음표 리스트를 반환합니다.
 
@@ -51,16 +52,29 @@ async def audio_to_sheet(file: UploadFile = File(...)):
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # 2. Basic Pitch로 MIDI 변환
+    # 2. MIDI 변환 + 코드 감지 병렬 실행
     midi_path = convert_audio_to_midi(upload_path)
 
     # 3. MIDI → 음표 리스트
     notes = midi_to_note_list(midi_path)
 
-    # 4. 업로드 파일 정리
+    # 4. 코드 감지 (조성 감지 + 다이아토닉 화성 분석)
+    detected_key = None
+    try:
+        audio, sr = _load_audio(upload_path, target_sr=22050)
+        chords, detected_key = detect_chords(audio, sr, notes, forced_key=key)
+    except Exception:
+        chords = []
+
+    # 5. 업로드 파일 정리
     os.remove(upload_path)
 
-    return {"notes": notes, "midi_file": os.path.basename(midi_path)}
+    return {
+        "notes": notes,
+        "chords": chords,
+        "detected_key": detected_key,
+        "midi_file": os.path.basename(midi_path),
+    }
 
 
 # --------------------------------------------------
@@ -108,6 +122,22 @@ def download_file(filename: str):
     if not os.path.exists(file_path):
         return {"error": "파일을 찾을 수 없습니다."}
     return FileResponse(file_path, media_type="audio/midi", filename=filename)
+
+
+# ── VexFlow bravura 직접 서빙 (번들링 우회, 폰트 포함 버전) ─
+VEXFLOW_PATH = os.path.join(
+    os.path.dirname(__file__), "app", "node_modules",
+    "vexflow", "build", "cjs", "vexflow-bravura.js"
+)
+
+@app.get("/vexflow-bravura.js")
+def serve_vexflow():
+    return FileResponse(VEXFLOW_PATH, media_type="application/javascript")
+
+@app.get("/vf-test.html")
+def serve_vf_test():
+    p = os.path.join(os.path.dirname(__file__), "app", "dist", "vf-test.html")
+    return FileResponse(p, media_type="text/html")
 
 
 # ── 앱 정적 파일 서빙 (빌드된 Expo 웹앱) ─────────────────
