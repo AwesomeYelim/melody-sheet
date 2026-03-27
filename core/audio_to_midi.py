@@ -15,7 +15,7 @@ OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ── 상수 ──────────────────────────────────────────────────
-CONFIDENCE_THRESHOLD = 0.45   # CREPE 신뢰도 임계값 (낮출수록 더 많은 음 감지)
+CONFIDENCE_THRESHOLD = 0.60   # CREPE 신뢰도 임계값 — 높일수록 확실한 음만 통과
 MIN_NOTE_DURATION    = 0.08   # 최소 음표 길이 (초) — 너무 짧은 노이즈 제거
 CREPE_STEP_MS        = 10     # CREPE 분석 단위 (ms)
 MIDI_MIN             = 36     # C2
@@ -94,20 +94,41 @@ def convert_audio_to_midi(audio_path: str) -> str:
     print(f"[AMT] 로드 완료: {len(audio)/sr:.1f}초")
 
     # ── 2. 노이즈 제거 ───────────────────────────────────────
-    # 앞 0.3초를 노이즈 프로파일로 사용 (정적 배경음 제거)
-    noise_clip = audio[:int(sr * 0.3)]
-    audio_clean = nr.reduce_noise(
-        y=audio,
-        sr=sr,
-        y_noise=noise_clip,
-        prop_decrease=0.75,    # 75% 노이즈 감쇄
-        stationary=False,      # 비정상 노이즈도 처리
-    )
-    print("[AMT] 노이즈 제거 완료")
+    # 앞 0.3초가 묵음에 가까울 때만 노이즈 프로파일로 사용
+    # (소리가 있으면 멜로디를 노이즈로 오인해 지워버리는 문제 방지)
+    noise_clip_len = int(sr * 0.3)
+    noise_clip = audio[:noise_clip_len]
+    noise_rms = float(np.sqrt(np.mean(noise_clip ** 2)))
+    signal_rms = float(np.sqrt(np.mean(audio ** 2)))
+    if noise_rms < signal_rms * 0.3:
+        # 앞부분이 충분히 조용할 때만 노이즈 제거 적용
+        audio_clean = nr.reduce_noise(
+            y=audio,
+            sr=sr,
+            y_noise=noise_clip,
+            prop_decrease=0.75,
+            stationary=False,
+        )
+        print("[AMT] 노이즈 제거 완료")
+    else:
+        audio_clean = audio
+        print("[AMT] 노이즈 제거 스킵 (앞부분에 신호 있음)")
 
     # ── 3. CREPE 피치 추정 (딥러닝, torchcrepe) ─────────────
     print("[AMT] CREPE 피치 추정 중...")
     hop_length = int(sr * CREPE_STEP_MS / 1000)   # 10ms → 샘플 수
+
+    # CPU 우선순위를 낮춤 — 다른 작업 영향 없이 백그라운드에서만 처리
+    try:
+        import ctypes
+        BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+        ctypes.windll.kernel32.SetPriorityClass(
+            ctypes.windll.kernel32.GetCurrentProcess(),
+            BELOW_NORMAL_PRIORITY_CLASS,
+        )
+    except Exception:
+        pass
+    torch.set_num_threads(2)
 
     audio_tensor = torch.tensor(audio_clean, dtype=torch.float32).unsqueeze(0)
     frequencies, confidences = torchcrepe.predict(
@@ -116,15 +137,21 @@ def convert_audio_to_midi(audio_path: str) -> str:
         hop_length=hop_length,
         fmin=32.7,    # C1
         fmax=1975.5,  # B6
-        model="tiny",
+        model=os.environ.get("CREPE_MODEL", "tiny"),  # 배포 시 CREPE_MODEL=full 환경변수로 전환
         decoder=torchcrepe.decode.viterbi,   # Viterbi: 피치 급변 스무딩
         device="cpu",
         return_periodicity=True,
+        batch_size=256,                      # 배치 크기 제한 → 메모리 스파이크 방지
     )
     # (1, T) → (T,) numpy 변환
     frequencies  = frequencies.squeeze(0).numpy()
     confidences  = confidences.squeeze(0).numpy()
     times        = np.arange(len(frequencies)) * (CREPE_STEP_MS / 1000.0)
+
+    # 피치 메디안 필터: 5프레임(50ms) 창으로 순간 튀는 값 제거
+    from scipy.signal import medfilt
+    frequencies = medfilt(frequencies, kernel_size=5)
+
     print(f"[AMT] CREPE 완료: {len(times)} 프레임")
 
     # ── 4. Onset 감지 ────────────────────────────────────────

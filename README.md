@@ -142,5 +142,22 @@ npx expo start                                # 모바일 (Expo Go)
 - [x] 오디오 파일 업로드 화면
 - [x] 키 변조 화면
 - [x] 앱에서 마이크 녹음
-- [ ] 웹(PC) 파일 업로드 422 오류 수정 (모바일은 정상)
-- [ ] 앱에서 악보 렌더링 (VexFlow)
+- [x] 웹(PC) 파일 업로드 422 오류 수정 (모바일은 정상)
+- [x] 앱에서 악보 렌더링 (VexFlow) — 웹 전용, 모바일은 음표 카드 폴백
+- [x] VexFlow 악보 개선 — 동적 stave 넓이, 행마다 음자리표, chords 재렌더링
+- [x] 코드 감지 (Krumhansl-Schmuckler 조성 감지 + 다이아토닉 코드 배정)
+- [x] 수동 키 선택 UI (21개 키 옵션)
+- [x] 악보 재생 기능 (Web Audio API, triangle wave)
+- [x] 노래 제목 입력란 — 악보 상단 표시 + 파일명 사용
+- [x] PNG 다운로드 (Bravura 폰트 embed → canvas 변환)
+- [x] M4A 등 다양한 오디오 포맷 지원 (imageio-ffmpeg)
+- [x] Oracle Cloud 서버 배포 (138.2.119.220, Ubuntu 24.04, CREPE tiny)
+- [x] GitHub Actions 자동 배포 (push → SSH → deploy.sh)
+
+## 다음 할 일
+
+- [ ] Oracle Cloud VCN Security List 포트 8000 Ingress 오픈 (콘솔에서 직접)
+- [ ] 앱 API_URL을 로컬에서 서버 주소(138.2.119.220:8000)로 전환
+- [ ] ARM 인스턴스 확보 시 CREPE_MODEL=full 환경변수로 정확도 업그레이드
+- [ ] 모바일 앱 빌드 및 배포 (Expo EAS Build)
+- [ ] 코드 감지 정확도 개선

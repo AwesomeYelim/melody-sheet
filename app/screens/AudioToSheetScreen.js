@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
-  StyleSheet, Alert, ScrollView,
+  StyleSheet, Alert, ScrollView, TextInput,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { Audio } from "expo-av";
@@ -18,6 +18,7 @@ export default function AudioToSheetScreen() {
   const [detectedKey, setDetectedKey] = useState(null);
   const [fileName, setFileName] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [songTitle, setSongTitle] = useState("");
 
   const KEY_OPTIONS = [
     "auto",
@@ -170,6 +171,15 @@ export default function AudioToSheetScreen() {
       <Text style={styles.title}>멜로디 → 악보</Text>
       <Text style={styles.subtitle}>마이크로 녹음하거나 파일을 선택하세요</Text>
 
+      {/* 노래 제목 입력 */}
+      <TextInput
+        style={styles.titleInput}
+        placeholder="노래 제목 입력 (선택)"
+        placeholderTextColor="#aaa"
+        value={songTitle}
+        onChangeText={setSongTitle}
+      />
+
       {/* 녹음 버튼 */}
       {!isRecording ? (
         <TouchableOpacity
@@ -250,7 +260,7 @@ export default function AudioToSheetScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
-          <SheetMusic notes={notes} chords={chords} filename={fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music"} />
+          <SheetMusic notes={notes} chords={chords} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} />
           <NoteList notes={notes} />
         </View>
       )}
@@ -365,6 +375,17 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#cc0000",
     fontSize: 13,
+  },
+  titleInput: {
+    borderWidth: 1.5,
+    borderColor: "#ddd",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: "#1a1a2e",
+    backgroundColor: "#fff",
+    marginBottom: 20,
   },
   loadingBox: {
     marginTop: 40,

@@ -1,0 +1,17 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 접속 후 배포
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 138.2.119.220
+          username: ubuntu
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: ~/deploy.sh
