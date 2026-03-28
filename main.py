@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -53,10 +53,18 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
         shutil.copyfileobj(file.file, f)
 
     # 2. MIDI 변환 + 코드 감지 병렬 실행
-    midi_path = convert_audio_to_midi(upload_path)
+    try:
+        midi_path = convert_audio_to_midi(upload_path)
+    except Exception as e:
+        os.remove(upload_path)
+        raise HTTPException(status_code=500, detail=f"오디오→MIDI 변환 실패: {e}")
 
     # 3. MIDI → 음표 리스트
-    notes = midi_to_note_list(midi_path)
+    try:
+        notes = midi_to_note_list(midi_path)
+    except Exception as e:
+        os.remove(upload_path)
+        raise HTTPException(status_code=500, detail=f"MIDI 분석 실패: {e}")
 
     # 4. 코드 감지 (조성 감지 + 다이아토닉 화성 분석)
     detected_key = None
@@ -66,8 +74,8 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
     except Exception:
         chords = []
 
-    # 5. 업로드 파일 정리
-    os.remove(upload_path)
+    # 5. 업로드 파일은 디버깅용으로 보존
+    # os.remove(upload_path)
 
     return {
         "notes": notes,
