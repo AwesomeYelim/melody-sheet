@@ -1,9 +1,10 @@
 /**
- * SheetMusic.web.js — VexFlow 5 EasyScore API 기반 악보 렌더링 + PNG 다운로드 + 재생
- * VexFlow는 index.html의 <script src="/vexflow-bravura.js"> 로 로드 → window.VexFlow
+ * SheetMusic.web.js — VexFlow 5 EasyScore API 기반 악보 렌더링 + 제어 패널
  */
 import React, { useEffect, useRef, useState } from "react";
 import { Text, TouchableOpacity, StyleSheet, View } from "react-native";
+import VexFlowModule from "vexflow/bravura";
+import { API_URL } from "../config";
 
 // ── 상수 ──────────────────────────────────────────────────
 const STAVE_HEIGHT = 140;
@@ -19,9 +20,8 @@ const DUR_MAP = {
 const DUR_UNITS = { w: 32, h: 16, q: 8, "8": 4, "16": 2, "32": 1 };
 const MEASURE_UNITS = BEATS_PER_MEASURE * 8;
 
-// 재생 BPM 기준 음표 길이(초)
-const BPM = 100;
-const BEAT_SEC = 60 / BPM;
+const DEFAULT_BPM = 100;
+const BEAT_SEC = 60 / DEFAULT_BPM;
 const DUR_SEC = {
   whole: BEAT_SEC * 4, half: BEAT_SEC * 2, quarter: BEAT_SEC,
   eighth: BEAT_SEC / 2, "16th": BEAT_SEC / 4, "32nd": BEAT_SEC / 8,
@@ -43,16 +43,18 @@ function pitchToFreq(pitch) {
 
 // ── Web Audio API 재생 ────────────────────────────────────
 function scheduleNotes(notes) {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return null;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
 
-  const ctx = new AudioContext();
+  const ctx = new AudioCtx();
   const masterGain = ctx.createGain();
   masterGain.gain.value = 0.25;
   masterGain.connect(ctx.destination);
 
   let t = ctx.currentTime + 0.05;
   let totalSec = 0;
+  const noteTimes = [];
+  let noteIndex = 0;
 
   for (const note of notes) {
     const dur = DUR_SEC[note.duration] || BEAT_SEC;
@@ -64,7 +66,6 @@ function scheduleNotes(notes) {
       osc.type = "triangle";
       osc.frequency.value = freq;
 
-      // 간단한 ADSR 엔벨로프
       gain.gain.setValueAtTime(0, t);
       gain.gain.linearRampToValueAtTime(1, t + 0.015);
       gain.gain.setValueAtTime(1, t + dur * 0.65);
@@ -74,13 +75,16 @@ function scheduleNotes(notes) {
       gain.connect(masterGain);
       osc.start(t);
       osc.stop(t + dur);
+
+      noteTimes.push({ noteIndex, startTime: t, endTime: t + dur });
     }
 
+    noteIndex++;
     t += dur;
     totalSec += dur;
   }
 
-  return { ctx, totalSec };
+  return { ctx, totalSec, noteTimes };
 }
 
 // ── 악보 레이아웃 ─────────────────────────────────────────
@@ -137,10 +141,13 @@ function finalizeMeasureObj(notes, usedUnits) {
     if (n.pitch === "rest") return `B4/${n._vd}r`;
     return `${toEasyPitch(n.pitch)}/${n._vd}`;
   }).join(", ");
+  // Track which tickable indices are real notes (not padding rests)
+  const tickableMap = result.map((n, i) => (n.pitch !== "rest" ? i : -1)).filter((i) => i >= 0);
   return {
     noteStr,
     startTime: notes[0].start_time ?? 0,
     tokenCount: result.length,
+    tickableMap,
   };
 }
 
@@ -151,28 +158,65 @@ function calcStaveWidth(tokenCount, isRowStart, isFirst) {
 }
 
 // ── PNG 다운로드 ──────────────────────────────────────────
+// 폰트 캐시 (한 번만 fetch)
+let _fontCache = null;
+
+async function fetchFontDataUrls() {
+  if (_fontCache) return _fontCache;
+
+  const VF = VexFlowModule.default || VexFlowModule;
+  const Font = VF.Font;
+  const fontNames = ["Bravura", "Academico"];
+  const rules = [];
+
+  for (const name of fontNames) {
+    try {
+      const url = Font.HOST_URL + Font.FILES[name];
+      if (!url) continue;
+
+      // 이미 data URL이면 그대로 사용
+      if (url.startsWith("data:")) {
+        rules.push(`@font-face { font-family: '${name}'; src: url(${url}) format('woff2'); }`);
+        continue;
+      }
+
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      const dataUrl = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onloadend = () => res(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      rules.push(`@font-face { font-family: '${name}'; src: url(${dataUrl}) format('woff2'); }`);
+    } catch (e) {
+      console.warn(`[SheetMusic] 폰트 ${name} 로드 실패:`, e);
+    }
+  }
+
+  _fontCache = rules;
+  return rules;
+}
+
 async function downloadAsPng(containerEl, filename) {
   const svgEl = containerEl && containerEl.querySelector("svg");
   if (!svgEl) return;
 
   const clone = svgEl.cloneNode(true);
-  const fontUrl = window._bravuraFontUrl;
-  if (fontUrl) {
-    let defs = clone.querySelector("defs");
-    if (!defs) {
-      defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      clone.insertBefore(defs, clone.firstChild);
-    }
-    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-    style.textContent = `@font-face { font-family: 'Bravura'; src: url('${fontUrl}'); font-display: block; }`;
-    defs.appendChild(style);
-  }
-
   const bbox = svgEl.getBoundingClientRect();
   const w = Math.round(bbox.width) || 900;
   const h = Math.round(bbox.height) || 300;
   clone.setAttribute("width", w);
   clone.setAttribute("height", h);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+
+  // 폰트를 SVG에 인라인 삽입
+  const fontRules = await fetchFontDataUrls();
+  if (fontRules.length > 0) {
+    const styleEl = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    styleEl.textContent = fontRules.join("\n");
+    clone.insertBefore(styleEl, clone.firstChild);
+  }
 
   const svgData = new XMLSerializer().serializeToString(clone);
   const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
@@ -213,15 +257,26 @@ function getChordAt(chords, startTime) {
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────
-export default function SheetMusic({ notes, chords = [], title = "", filename = "sheet_music" }) {
+export default function SheetMusic({ notes, chords = [], title = "", filename = "sheet_music", midiFile = null }) {
   const containerRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioCtxRef = useRef(null);
   const playTimerRef = useRef(null);
+  const noteElementsRef = useRef([]);
+  const rafRef = useRef(null);
+  const prevHighlightRef = useRef(-1);
 
-  // 재생 중 notes 변경 시 자동 중지
+  const [showSheet, setShowSheet] = useState(true);
+
+  // API가 music21의 notesAndRests를 반환하므로 rest 제거
+  // (buildMeasures가 자체적으로 패딩 rest를 생성함)
+  const pitchedNotes = React.useMemo(
+    () => (notes || []).filter((n) => n.pitch && n.pitch !== "rest"),
+    [notes],
+  );
+
   useEffect(() => {
     handleStop();
   }, [notes]);
@@ -229,19 +284,20 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
   useEffect(() => {
     setReady(false);
     setError(null);
-    if (!containerRef.current || !notes || notes.length === 0) return;
+    if (!containerRef.current || !pitchedNotes || pitchedNotes.length === 0) return;
+    if (!showSheet) return;
 
     (async () => {
       try {
-        const VF = window.VexFlow;
-        if (!VF) throw new Error("VexFlow 미로드");
+        const VF = VexFlowModule.default || VexFlowModule;
+        if (!VF || !VF.Factory) throw new Error("VexFlow 로드 실패");
 
         await document.fonts.ready;
-
         containerRef.current.innerHTML = "";
 
-        const measures = buildMeasures(notes);
+        const measures = buildMeasures(pitchedNotes);
         const rows = Math.ceil(measures.length / STAVES_PER_ROW);
+        const voiceInfos = [];
 
         let maxRowW = 0;
         for (let row = 0; row < rows; row++) {
@@ -276,9 +332,10 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
           const w = calcStaveWidth(measures[i].tokenCount, isRowStart, isFirst);
 
           try {
-            const { noteStr, startTime } = measures[i];
+            const { noteStr, startTime, tickableMap } = measures[i];
             const voice = score.voice(score.notes(noteStr));
             voice.setMode(VF.Voice.Mode.SOFT);
+            voiceInfos.push({ voice, tickableMap });
 
             const chordName = getChordAt(chords, startTime);
             if (chordName) {
@@ -303,32 +360,108 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
         }
 
         vf.draw();
+
+        // Collect SVG elements for each real note (rest excluded)
+        const svgElements = [];
+        for (const { voice, tickableMap } of voiceInfos) {
+          const tickables = voice.getTickables();
+          for (const ti of tickableMap) {
+            const el = tickables[ti] && tickables[ti].getSVGElement
+              ? tickables[ti].getSVGElement()
+              : null;
+            if (el) svgElements.push(el);
+          }
+        }
+        noteElementsRef.current = svgElements;
+
         setReady(true);
       } catch (e) {
         console.error("[SheetMusic] 오류:", e);
         setError(e.message);
       }
     })();
-  }, [notes, chords]);
+  }, [pitchedNotes, chords, showSheet]);
 
-  function handlePlay() {
+  function highlightNote(index) {
+    const el = noteElementsRef.current[index];
+    if (!el) return;
+    el.querySelectorAll("path, rect, line, circle, ellipse, text, polygon").forEach((child) => {
+      const origFill = child.getAttribute("fill");
+      if (origFill !== "none") child.style.fill = "#4F8EF7";
+      child.style.stroke = "#4F8EF7";
+    });
+  }
+
+  function unhighlightNote(index) {
+    const el = noteElementsRef.current[index];
+    if (!el) return;
+    el.querySelectorAll("path, rect, line, circle, ellipse, text, polygon").forEach((child) => {
+      child.style.fill = "";
+      child.style.stroke = "";
+    });
+  }
+
+  function clearAllHighlights() {
+    for (let i = 0; i < noteElementsRef.current.length; i++) {
+      unhighlightNote(i);
+    }
+    prevHighlightRef.current = -1;
+  }
+
+  async function handlePlay() {
     if (isPlaying) { handleStop(); return; }
 
-    const result = scheduleNotes(notes);
+    const result = scheduleNotes(pitchedNotes);
     if (!result) return;
+
+    if (result.ctx.state === "suspended") {
+      await result.ctx.resume();
+    }
 
     audioCtxRef.current = result.ctx;
     setIsPlaying(true);
 
-    // 재생 완료 후 자동 초기화
+    const { noteTimes } = result;
+
+    function tick() {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+
+      let activeIdx = -1;
+      for (let i = 0; i < noteTimes.length; i++) {
+        if (now >= noteTimes[i].startTime && now < noteTimes[i].endTime) {
+          activeIdx = i;
+          break;
+        }
+      }
+
+      if (activeIdx !== prevHighlightRef.current) {
+        if (prevHighlightRef.current >= 0) unhighlightNote(prevHighlightRef.current);
+        if (activeIdx >= 0) highlightNote(activeIdx);
+        prevHighlightRef.current = activeIdx;
+      }
+
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    rafRef.current = requestAnimationFrame(tick);
+
     playTimerRef.current = setTimeout(() => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      clearAllHighlights();
       setIsPlaying(false);
-      audioCtxRef.current = null;
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
+      }
     }, result.totalSec * 1000 + 200);
   }
 
   function handleStop() {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (playTimerRef.current) clearTimeout(playTimerRef.current);
+    clearAllHighlights();
     if (audioCtxRef.current) {
       audioCtxRef.current.close();
       audioCtxRef.current = null;
@@ -336,34 +469,70 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
     setIsPlaying(false);
   }
 
-  if (!notes || notes.length === 0) return null;
+  function handleDownloadMidi() {
+    if (!midiFile) return;
+    const a = document.createElement("a");
+    a.href = `${API_URL}/api/download/${midiFile}`;
+    a.download = midiFile;
+    a.click();
+  }
+
+  if (!pitchedNotes || pitchedNotes.length === 0) return null;
 
   return (
     <View style={styles.wrapper}>
-      <View style={styles.header}>
-        <Text style={styles.label}>악보</Text>
-        <View style={styles.btnRow}>
-          {ready && (
+      {/* 제어 패널 */}
+      <View style={styles.controlPanel}>
+        {/* 악보 토글 */}
+        <View style={styles.toggleRow}>
+          <TouchableOpacity
+            style={[styles.toggleBtn, showSheet && styles.toggleBtnActive]}
+            onPress={() => setShowSheet(!showSheet)}
+          >
+            <Text style={[styles.toggleText, showSheet && styles.toggleTextActive]}>
+              악보
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 액션 버튼 */}
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, isPlaying ? styles.stopBtn : styles.playBtn]}
+            onPress={handlePlay}
+          >
+            <Text style={styles.actionBtnText}>
+              {isPlaying ? "■ 정지" : "▶ 재생"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.downloadPngBtn]}
+            onPress={() => downloadAsPng(containerRef.current, `${filename}.png`)}
+            disabled={!ready || !showSheet}
+          >
+            <Text style={styles.actionBtnText}>PNG</Text>
+          </TouchableOpacity>
+
+          {midiFile && (
             <TouchableOpacity
-              style={[styles.playBtn, isPlaying && styles.playBtnStop]}
-              onPress={handlePlay}
+              style={[styles.actionBtn, styles.downloadMidiBtn]}
+              onPress={handleDownloadMidi}
             >
-              <Text style={styles.playBtnText}>{isPlaying ? "■ 정지" : "▶ 재생"}</Text>
-            </TouchableOpacity>
-          )}
-          {ready && (
-            <TouchableOpacity
-              style={styles.downloadBtn}
-              onPress={() => downloadAsPng(containerRef.current, `${filename}.png`)}
-            >
-              <Text style={styles.downloadText}>이미지 다운로드</Text>
+              <Text style={styles.actionBtnText}>MIDI</Text>
             </TouchableOpacity>
           )}
         </View>
       </View>
+
       {error && <Text style={styles.errorText}>렌더링 오류: {error}</Text>}
       {title ? <Text style={styles.sheetTitle}>{title}</Text> : null}
-      <div ref={containerRef} style={{ overflowX: "auto" }} />
+
+      {/* 악보 영역 */}
+      {showSheet && (
+        <div ref={containerRef} style={{ overflowX: "auto" }} />
+      )}
+
     </View>
   );
 }
@@ -372,40 +541,73 @@ const styles = StyleSheet.create({
   wrapper: {
     marginTop: 24,
     backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 12,
+    borderRadius: 12,
+    padding: 16,
     borderWidth: 1,
     borderColor: "#e0e0e0",
   },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
+  // ── 제어 패널 ──────────────────────────────────
+  controlPanel: {
+    marginBottom: 12,
   },
-  btnRow: {
+  toggleRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+  },
+  toggleBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: "#ddd",
+    backgroundColor: "#f5f5f5",
+  },
+  toggleBtnActive: {
+    backgroundColor: "#4F8EF7",
+    borderColor: "#4F8EF7",
+  },
+  toggleText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#666",
+  },
+  toggleTextActive: {
+    color: "#fff",
+  },
+  actionRow: {
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
   },
-  label: { fontSize: 13, fontWeight: "bold", color: "#888" },
+  actionBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minWidth: 60,
+    alignItems: "center",
+  },
+  actionBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "bold",
+  },
   playBtn: {
     backgroundColor: "#34C759",
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
   },
-  playBtnStop: {
+  stopBtn: {
     backgroundColor: "#E94F4F",
   },
-  playBtnText: { color: "#fff", fontSize: 13, fontWeight: "bold" },
-  downloadBtn: {
+  downloadPngBtn: {
     backgroundColor: "#4F8EF7",
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
   },
-  downloadText: { color: "#fff", fontSize: 13, fontWeight: "bold" },
+  downloadMidiBtn: {
+    backgroundColor: "#8B5CF6",
+  },
+  // ── 기타 ──────────────────────────────────────
   errorText: { color: "red", fontSize: 12, marginBottom: 4 },
-  sheetTitle: { fontSize: 16, fontWeight: "bold", color: "#1a1a2e", textAlign: "center", marginBottom: 6 },
+  sheetTitle: {
+    fontSize: 16, fontWeight: "bold", color: "#1a1a2e",
+    textAlign: "center", marginBottom: 6,
+  },
 });

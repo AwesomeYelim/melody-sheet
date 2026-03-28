@@ -71,6 +71,14 @@ def midi_to_note_list(midi_path: str) -> list:
                 "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
+        elif isinstance(element, music21.chord.Chord):
+            # 양자화로 동시 시작된 음표 → 가장 높은 음(멜로디)만 추출
+            top = element.pitches[-1]
+            notes.append({
+                "pitch": top.nameWithOctave,
+                "duration": _resolve_duration(element),
+                "start_time": float(element.offset),
+            })
         elif isinstance(element, music21.note.Rest):
             notes.append({
                 "pitch": "rest",

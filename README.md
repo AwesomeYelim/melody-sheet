@@ -7,9 +7,9 @@
 | 영역 | 기술 |
 |------|------|
 | 백엔드 | Python FastAPI |
-| 오디오 분석 | CREPE (torchcrepe, PyTorch 기반 딥러닝 AMT) |
-| 노이즈 제거 | noisereduce |
+| 오디오 분석 | Basic Pitch (ONNX 기반 딥러닝 AMT) |
 | 악보 처리 | music21, pretty_midi |
+| 악보 렌더링 | VexFlow 5 (Bravura SMuFL) |
 | 앱 | React Native (Expo) |
 
 ## AMT 파이프라인
@@ -17,17 +17,19 @@
 ```
 오디오 입력
   ↓
-① noisereduce    — 배경 노이즈 제거 (spectral gating)
+① Basic Pitch     — end-to-end 딥러닝 음표 추출 (onset/frame 감지)
   ↓
-② CREPE          — 딥러닝 피치 추정 (viterbi 디코딩으로 불안정 피치 스무딩)
+② 잡음 필터       — 진폭·길이 기반 노이즈 음표 제거
   ↓
-③ librosa onset  — 음표 시작점 감지 (빠른 전환 처리)
+③ 옥타브 중복 제거 — 배음/하모닉스 필터링
   ↓
-④ 음표 세그먼테이션 — 구간별 신뢰도 가중 중앙값으로 대표 음 추출
+④ 동일음 병합     — 인접 동일 피치 병합 + 짧은음 흡수
   ↓
-⑤ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
+⑤ 조성 감지 + 보정 — Krumhansl-Schmuckler 프로파일, ±1 반음 스냅
   ↓
-⑥ pretty_midi    — MIDI 출력
+⑥ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
+  ↓
+⑦ pretty_midi     — MIDI 출력 (조성 정보 포함)
 ```
 
 ## 프로젝트 구조
@@ -38,8 +40,9 @@ melody-sheet/
 ├── requirements.txt         # 패키지 목록
 ├── test.py                  # API 테스트 스크립트
 ├── core/
-│   ├── audio_to_midi.py     # 딥러닝 AMT: 오디오 → MIDI (CREPE + noisereduce)
-│   ├── midi_to_sheet.py     # MIDI → 음표 JSON
+│   ├── audio_to_midi.py     # 딥러닝 AMT: 오디오 → MIDI (Basic Pitch)
+│   ├── midi_to_sheet.py     # MIDI → 음표 JSON (Chord 객체 지원)
+│   ├── chord_detector.py    # 멜로디 기반 코드 감지
 │   └── transposer.py        # 키 변조
 ├── uploads/                 # 업로드 파일 임시 저장
 └── output/                  # 변환된 MIDI 저장
@@ -120,7 +123,7 @@ app/
 │   ├── AudioToSheetScreen.js     # 멜로디 → 악보 화면 (마이크 녹음 + 파일 업로드)
 │   └── TransposeScreen.js        # 키 변조 화면
 └── components/
-    └── NoteList.js               # 음표 카드 리스트 컴포넌트
+    └── SheetMusic.web.js         # VexFlow 악보 렌더링 + 재생 하이라이트
 ```
 
 앱 실행:
@@ -134,8 +137,8 @@ npx expo start                                # 모바일 (Expo Go)
 ## 개발 현황
 
 - [x] 백엔드 API 구축
-- [x] 오디오 → MIDI 변환 (Basic Pitch → **CREPE 딥러닝으로 업그레이드**)
-- [x] 노이즈 제거 (noisereduce)
+- [x] 오디오 → MIDI 변환 (Basic Pitch 딥러닝 AMT)
+- [x] 잡음 필터링 (진폭/길이 기반 + 옥타브 중복 제거)
 - [x] MIDI → 음표 JSON 변환
 - [x] 키 변조 기능
 - [x] React Native 앱 기본 구조
@@ -147,8 +150,9 @@ npx expo start                                # 모바일 (Expo Go)
 - [x] VexFlow 악보 개선 — 동적 stave 넓이, 행마다 음자리표, chords 재렌더링
 - [x] 코드 감지 (Krumhansl-Schmuckler 조성 감지 + 다이아토닉 코드 배정)
 - [x] 수동 키 선택 UI (21개 키 옵션)
-- [x] 악보 재생 기능 (Web Audio API, triangle wave)
+- [x] 악보 재생 기능 (Web Audio API, triangle wave) + 재생 중 음표 하이라이트
 - [x] 노래 제목 입력란 — 악보 상단 표시 + 파일명 사용
+- [x] 조성 감지 강화 (threshold 하향, snap-down 보정, MIDI 조성 정보 삽입)
 - [x] PNG 다운로드 (Bravura 폰트 embed → canvas 변환)
 - [x] M4A 등 다양한 오디오 포맷 지원 (imageio-ffmpeg)
 - [x] Oracle Cloud 서버 배포 (138.2.119.220, Ubuntu 24.04, CREPE tiny)
