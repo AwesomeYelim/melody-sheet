@@ -1,5 +1,6 @@
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -20,3 +21,9 @@ app/.expo/
 .idea/
 .vscode/
 *.iml
+
+# Claude Code
+.claude/
+
+# 로컬 스크립트
+dev.sh
