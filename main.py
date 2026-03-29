@@ -6,7 +6,7 @@ import os
 import shutil
 import time
 
-from core.audio_to_midi import convert_audio_to_midi, _load_audio
+from core.audio_to_midi import convert_audio_to_midi, _load_audio, fill_gaps_with_whisper
 from core.midi_to_sheet import midi_to_note_list
 from core.transposer import transpose_midi
 from core.chord_detector import detect_chords
@@ -75,11 +75,20 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
     except Exception:
         chords = []
 
-    # 5. 가사 추출 (Whisper) + 음표 매핑
+    # 5. 가사 추출 (Whisper) + Whisper 보정 + 음표 매핑
     lyrics = []
     try:
         words = transcribe_lyrics(upload_path)
         if words:
+            # Whisper 가사 타이밍으로 누락 구간 보정
+            midi_path, n_added = fill_gaps_with_whisper(
+                upload_path, midi_path, words, audio_offset
+            )
+            if n_added > 0:
+                # MIDI가 업데이트되었으므로 음표 리스트 재생성
+                notes = midi_to_note_list(midi_path)
+                print(f"[AMT] Whisper 보정 후 음표: {len(notes)}개")
+
             lyrics = align_lyrics_to_notes(words, notes, midi_path, audio_offset=audio_offset)
             print(f"[AMT] 가사 매핑: {sum(1 for l in lyrics if l)}개 음표에 가사 할당")
     except Exception as e:

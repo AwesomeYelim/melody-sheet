@@ -4,6 +4,29 @@ import music21
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# 이명동음 변환: # → b
+_SHARP_TO_FLAT = {
+    "C#": "D-", "D#": "E-", "E#": "F", "F#": "G-",
+    "G#": "A-", "A#": "B-", "B#": "C",
+}
+
+
+def _to_flat_name(pitch_name_with_octave: str, use_flats: bool) -> str:
+    """use_flats이면 D#4 → Eb4 등으로 변환."""
+    if not use_flats:
+        return pitch_name_with_octave
+    # 이름 부분과 옥타브 분리 (예: "D#4" → "D#", "4")
+    name = pitch_name_with_octave[:-1]  # "D#"
+    octave = pitch_name_with_octave[-1]  # "4"
+    if name in _SHARP_TO_FLAT:
+        flat_name = _SHARP_TO_FLAT[name]
+        # B# → C 는 옥타브 +1, E# → F 는 같은 옥타브
+        if name == "B#":
+            octave = str(int(octave) + 1)
+        return flat_name + octave
+    return pitch_name_with_octave
+
+
 # quarterLength → 표준 duration type 매핑 (내림차순)
 _QL_TO_TYPE = [
     (4.0, "whole"),
@@ -62,12 +85,20 @@ def midi_to_note_list(midi_path: str) -> list:
     ]
     """
     score = music21.converter.parse(midi_path)
+
+    # 조성 감지 → 플랫 키(조표에 b 포함)이면 # 대신 b 표기 사용
+    key_sig = score.analyze("key")
+    use_flats = False
+    if key_sig and hasattr(key_sig, "sharps") and key_sig.sharps is not None:
+        use_flats = key_sig.sharps < 0
+    print(f"[Sheet] 조성: {key_sig}, 플랫 표기: {use_flats}")
+
     notes = []
 
     for element in score.flat.notesAndRests:
         if isinstance(element, music21.note.Note):
             notes.append({
-                "pitch": element.nameWithOctave,
+                "pitch": _to_flat_name(element.nameWithOctave, use_flats),
                 "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
@@ -75,7 +106,7 @@ def midi_to_note_list(midi_path: str) -> list:
             # 양자화로 동시 시작된 음표 → 가장 높은 음(멜로디)만 추출
             top = element.pitches[-1]
             notes.append({
-                "pitch": top.nameWithOctave,
+                "pitch": _to_flat_name(top.nameWithOctave, use_flats),
                 "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })

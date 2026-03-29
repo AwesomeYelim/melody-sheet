@@ -2,6 +2,7 @@
 Whisper 기반 가사 추출 + 음표 타임스탬프 매핑 (음절 단위)
 """
 import os
+import torch
 import whisper
 import numpy as np
 import librosa
@@ -14,8 +15,10 @@ _model = None
 def _get_model():
     global _model
     if _model is None:
-        print("[Lyrics] Whisper 모델 로딩 (base)...")
-        _model = whisper.load_model("base")
+        # MPS는 word_timestamps의 float64 미지원 → CPU 사용
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[Lyrics] Whisper 모델 로딩 (medium, {device})...")
+        _model = whisper.load_model("medium", device=device)
         print("[Lyrics] 모델 로딩 완료")
     return _model
 
@@ -33,10 +36,13 @@ def transcribe_lyrics(audio_path: str) -> list:
         model = _get_model()
         audio, _ = librosa.load(wav_path, sr=16000, mono=True)
         audio = audio.astype(np.float32)
+        # MPS/CPU에서는 fp16 미지원
+        use_fp16 = model.device.type == "cuda"
         result = model.transcribe(
             audio,
             language="ko",
             word_timestamps=True,
+            fp16=use_fp16,
         )
     finally:
         if is_temp:

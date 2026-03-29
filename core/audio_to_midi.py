@@ -7,6 +7,7 @@ import torchcrepe
 import librosa
 import pretty_midi
 import imageio_ffmpeg
+import noisereduce as nr
 
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -81,6 +82,13 @@ def _run_crepe(wav_path: str):
     pYIN voicing으로 구간을 넓히되, 피치값은 CREPE가 있으면 CREPE 사용.
     """
     audio_22k, _ = librosa.load(wav_path, sr=22050, mono=True)
+
+    # ── 전처리: 노이즈 제거 + 음량 정규화 ────────────────
+    audio_22k = nr.reduce_noise(y=audio_22k, sr=22050, prop_decrease=0.7)
+    peak = np.max(np.abs(audio_22k))
+    if peak > 0:
+        audio_22k = audio_22k / peak * 0.95
+    print(f"[AMT] 전처리 완료: 노이즈 제거 + 정규화 (peak: {peak:.4f})")
 
     # ── CREPE ─────────────────────────────────────────────
     audio_16k = librosa.resample(audio_22k, orig_sr=22050, target_sr=CREPE_SR)
@@ -555,15 +563,34 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
             for n in notes:
                 n["start"] = max(0, n["start"] - start_offset)
 
-    # ── 10. 옥타브 오류 보정 ─────────────────────────────────
-    if len(notes) >= 2:
+    # ── 10. 음역대 정제 (IQR 이상치 제거 + 옥타브 보정) ──────
+    if len(notes) >= 4:
         all_midi = np.array([n["midi_note"] for n in notes])
-        median_midi = float(np.median(all_midi))
+        q1, median_midi, q3 = np.percentile(all_midi, [25, 50, 75])
+        iqr = q3 - q1
+        # 허용 범위: Q1 - 1.5*IQR ~ Q3 + 1.5*IQR (최소 ±7반음 보장)
+        half_range = max(7, iqr * 1.5)
+        low_bound = median_midi - half_range
+        high_bound = median_midi + half_range
+
+        before = len(notes)
+        corrected = []
         for n in notes:
-            while n["midi_note"] - median_midi > 11:
-                n["midi_note"] -= 12
-            while median_midi - n["midi_note"] > 11:
-                n["midi_note"] += 12
+            midi = n["midi_note"]
+            # 옥타브 보정 시도
+            while midi - median_midi > 11:
+                midi -= 12
+            while median_midi - midi > 11:
+                midi += 12
+            n["midi_note"] = midi
+            # IQR 범위 내만 유지
+            if low_bound <= midi <= high_bound:
+                corrected.append(n)
+        notes = corrected
+        if len(notes) < before:
+            print(f"[AMT] 음역대 정제: {before}개 → {len(notes)}개 "
+                  f"(범위: MIDI {low_bound:.0f}~{high_bound:.0f}, "
+                  f"중앙: {pretty_midi.note_number_to_name(int(median_midi))})")
 
     # ── 11. 로그 ─────────────────────────────────────────────
     print(f"[AMT] 최종 음표: {len(notes)}개")
@@ -603,3 +630,134 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
     print(f"[AMT] MIDI 저장 완료: {midi_path} (오프셋: {start_offset:.2f}s)")
 
     return midi_path, start_offset
+
+
+# ── Whisper 기반 갭 보정 ────────────────────────────────────
+def fill_gaps_with_whisper(audio_path: str, midi_path: str, syllables: list, audio_offset: float):
+    """
+    Whisper가 감지한 가사 구간에 음표가 없으면 pYIN으로 채움.
+    Returns: (updated_midi_path, added_count)
+    """
+    if not syllables:
+        return midi_path, 0
+
+    midi = pretty_midi.PrettyMIDI(midi_path)
+    if not midi.instruments:
+        return midi_path, 0
+
+    existing = sorted(midi.instruments[0].notes, key=lambda n: n.start)
+
+    # 기존 음표의 음역대 범위 (추가 음표도 이 범위 내로 제한)
+    if existing:
+        existing_pitches = [n.pitch for n in existing]
+        pitch_median = float(np.median(existing_pitches))
+        pitch_low = pitch_median - 7
+        pitch_high = pitch_median + 7
+    else:
+        pitch_low, pitch_high = MIDI_MIN, MIDI_MAX
+
+    # 기존 음표를 오디오 시간으로 변환
+    existing_ranges = [(n.start + audio_offset, n.end + audio_offset) for n in existing]
+
+    # Whisper 음절 중 매칭 안 되는 것 찾기
+    unmatched = []
+    for syl in syllables:
+        has_note = any(
+            syl["start"] < ne + 0.2 and syl["end"] > ns - 0.2
+            for ns, ne in existing_ranges
+        )
+        if not has_note:
+            unmatched.append(syl)
+
+    if not unmatched:
+        print(f"[Whisper보정] 갭 없음 — 모든 음절에 음표 매칭됨")
+        return midi_path, 0
+
+    print(f"[Whisper보정] 매칭 안 된 음절: {len(unmatched)}/{len(syllables)}개")
+
+    # 연속 미매칭 음절을 구간으로 묶기
+    regions = []
+    r_start = unmatched[0]["start"]
+    r_end = unmatched[0]["end"]
+    for s in unmatched[1:]:
+        if s["start"] - r_end < 0.5:
+            r_end = s["end"]
+        else:
+            regions.append((r_start, r_end))
+            r_start = s["start"]
+            r_end = s["end"]
+    regions.append((r_start, r_end))
+
+    # 오디오 로드 + 전처리
+    wav_path = _ensure_wav(audio_path)
+    is_temp = wav_path != audio_path
+    try:
+        audio, sr = librosa.load(wav_path, sr=22050, mono=True)
+        audio = nr.reduce_noise(y=audio, sr=sr, prop_decrease=0.7)
+        peak = np.max(np.abs(audio))
+        if peak > 0:
+            audio = audio / peak * 0.95
+    finally:
+        if is_temp:
+            os.unlink(wav_path)
+
+    added = 0
+    for r_start, r_end in regions:
+        # 구간 오디오 추출 (앞뒤 0.1초 여유)
+        s_sample = max(0, int((r_start - 0.1) * sr))
+        e_sample = min(len(audio), int((r_end + 0.1) * sr))
+        segment = audio[s_sample:e_sample]
+
+        if len(segment) < int(sr * 0.1):
+            continue
+
+        # pYIN (매우 낮은 임계값)
+        f0, voiced, probs = librosa.pyin(
+            segment, fmin=PITCH_FMIN, fmax=PITCH_FMAX, sr=sr
+        )
+        times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=PYIN_HOP)
+        times += r_start - 0.1  # 절대 시간으로 변환
+
+        valid = voiced & (probs >= 0.05) & ~np.isnan(f0)
+        if not np.any(valid):
+            continue
+
+        midi_pitches = librosa.hz_to_midi(f0[valid])
+
+        # 이 구간의 각 Whisper 음절에 음표 할당
+        region_syls = [s for s in unmatched if s["start"] >= r_start and s["end"] <= r_end]
+        for syl in region_syls:
+            syl_mask = valid & (times >= syl["start"] - 0.1) & (times < syl["end"] + 0.1)
+            if not np.any(syl_mask):
+                continue
+
+            syl_pitches = librosa.hz_to_midi(f0[syl_mask])
+            syl_pitches = syl_pitches[~np.isnan(syl_pitches)]
+            if len(syl_pitches) == 0:
+                continue
+
+            midi_note = int(round(np.median(syl_pitches)))
+            # 기존 음표 음역대 범위 내만 허용
+            if not (pitch_low <= midi_note <= pitch_high):
+                continue
+
+            # MIDI 시간으로 변환 (오프셋 제거)
+            note_start = max(0.0, syl["start"] - audio_offset)
+            note_end = max(note_start + 0.1, syl["end"] - audio_offset)
+
+            midi.instruments[0].notes.append(pretty_midi.Note(
+                velocity=60,
+                pitch=midi_note,
+                start=note_start,
+                end=note_end,
+            ))
+            added += 1
+
+    if added > 0:
+        midi.instruments[0].notes.sort(key=lambda n: n.start)
+        midi.write(midi_path)
+        print(f"[Whisper보정] {added}개 음표 추가 → MIDI 업데이트")
+    else:
+        print(f"[Whisper보정] 추가된 음표 없음")
+
+    return midi_path, added

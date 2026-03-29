@@ -8,7 +8,7 @@
 |------|------|
 | 백엔드 | Python FastAPI |
 | 피치 추출 | CREPE full (torchcrepe) + pYIN (librosa) 하이브리드 |
-| 가사 추출 | OpenAI Whisper (base, 한국어) |
+| 가사 추출 | OpenAI Whisper (medium, 한국어) |
 | 악보 처리 | music21, pretty_midi |
 | 악보 렌더링 | VexFlow 5 (Bravura SMuFL) |
 | 앱 | React Native (Expo) |
@@ -20,28 +20,38 @@
   ↓
 ① WAV 변환         — imageio-ffmpeg으로 비-WAV 파일 변환
   ↓
-② CREPE + pYIN     — CREPE full 딥러닝 피치 추출 (MPS/CUDA GPU 지원)
-  하이브리드           pYIN 보조: CREPE 미감지 구간 피치 보완
+② 전처리           — noisereduce 배경 노이즈 제거 + 음량 정규화
   ↓
-③ onset 감지       — librosa onset_detect로 새 발성 시작점 감지
+③ CREPE + pYIN     — CREPE full 딥러닝 피치 추출 (MPS/CUDA GPU 지원)
+  하이브리드           pYIN 보조: CREPE 미감지 구간 피치 보완 (threshold 0.15)
   ↓
-④ 히스테리시스      — 피치 변화 + onset 기반 이산 음표 세그멘테이션
+④ onset 감지       — librosa onset_detect로 새 발성 시작점 감지
+  ↓
+⑤ 히스테리시스      — 피치 변화 + onset 기반 이산 음표 세그멘테이션
   세그멘테이션         5프레임 이동중앙값으로 비브라토 흡수
   ↓
-⑤ RMS 음량 필터    — 저음량 구간 음표 제거
+⑥ RMS 음량 필터    — 저음량 구간 음표 제거
   ↓
-⑥ 옥타브 중복 제거 — 배음/하모닉스 필터링
+⑦ 옥타브 중복 제거 — 배음/하모닉스 필터링
   ↓
-⑦ 동일음 병합      — 인접 동일 피치 병합 + 짧은음 흡수
-                     (onset 분할 음표는 보존)
+⑧ 동일음 병합      — 인접 동일 피치 병합 + 짧은음 흡수
+                     (onset 분할 음표는 보존, gap > 0.02s만 병합)
   ↓
-⑧ 조성 감지 + 보정 — Krumhansl-Schmuckler 프로파일, ±1 반음 스냅
+⑨ 조성 감지 + 보정 — Krumhansl-Schmuckler 프로파일, ±1 반음 스냅
   ↓
-⑨ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
+⑩ 음역대 정제      — IQR 기반 이상치 제거 (Q1-1.5*IQR ~ Q3+1.5*IQR)
   ↓
-⑩ pretty_midi      — MIDI 출력 (조성 정보 포함)
+⑪ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
   ↓
-⑪ Whisper 가사 추출 — 음절 단위 한국어 가사 + 음표 타임스탬프 매핑
+⑫ pretty_midi      — MIDI 출력 (조성 정보 포함)
+  ↓
+⑬ Whisper 가사 추출 — medium 모델, 음절 단위 한국어 가사
+  ↓
+⑭ Whisper 갭 보정  — 가사 있는데 음표 없는 구간 pYIN으로 채움
+  ↓
+⑮ 가사-음표 매핑   — 타임스탬프 기반 정렬 (오디오 오프셋 보정)
+  ↓
+⑯ 이명동음 보정    — 플랫 키에서 D# → Eb, A# → Bb 등 자동 변환
 ```
 
 ## 프로젝트 구조
@@ -165,15 +175,19 @@ npx expo start                                # 모바일 (Expo Go)
 - [x] 백엔드 API 구축
 - [x] 오디오 → MIDI 변환 (Basic Pitch → CREPE+pYIN 하이브리드로 교체)
 - [x] CREPE full 모델 + MPS GPU 가속
-- [x] pYIN 보조 피치 추출 (CREPE 미감지 구간 보완)
+- [x] pYIN 보조 피치 추출 (CREPE 미감지 구간 보완, threshold 0.15)
+- [x] 오디오 전처리 (noisereduce 노이즈 제거 + 음량 정규화)
 - [x] onset 감지로 동일 피치 내 새 음절 분리
 - [x] 히스테리시스 기반 음표 세그멘테이션 (비브라토 흡수)
 - [x] RMS 음량 기반 노이즈 필터링
 - [x] 잡음 필터링 (옥타브 중복 제거 + 짧은음 흡수)
+- [x] IQR 기반 음역대 정제 (이상치 음표 제거)
 - [x] MIDI → 음표 JSON 변환
+- [x] 이명동음 자동 보정 (플랫 키에서 D# → Eb, A# → Bb 등)
 - [x] 키 변조 기능
 - [x] 코드 감지 (Krumhansl-Schmuckler 조성 감지 + 다이아토닉 코드 배정)
-- [x] Whisper 기반 한국어 가사 추출 (음절 단위)
+- [x] Whisper medium 한국어 가사 추출 (음절 단위, CPU 전용)
+- [x] Whisper 갭 보정 (가사 있는 구간에 음표 없으면 pYIN으로 채움)
 - [x] 가사-음표 타임스탬프 정렬 (MIDI 오프셋 보정)
 - [x] React Native 앱 기본 구조
 - [x] 오디오 파일 업로드 화면
@@ -194,6 +208,5 @@ npx expo start                                # 모바일 (Expo Go)
 ## 다음 할 일
 
 - [ ] 도돌이표 (반복 구간) 자동 감지
-- [ ] 피치 추출 정확도 추가 개선
 - [ ] 모바일 앱 빌드 및 배포 (Expo EAS Build)
 - [ ] 코드 감지 정확도 개선
