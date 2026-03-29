@@ -7,7 +7,8 @@
 | 영역 | 기술 |
 |------|------|
 | 백엔드 | Python FastAPI |
-| 오디오 분석 | Basic Pitch (ONNX 기반 딥러닝 AMT) |
+| 피치 추출 | CREPE full (torchcrepe) + pYIN (librosa) 하이브리드 |
+| 가사 추출 | OpenAI Whisper (base, 한국어) |
 | 악보 처리 | music21, pretty_midi |
 | 악보 렌더링 | VexFlow 5 (Bravura SMuFL) |
 | 앱 | React Native (Expo) |
@@ -15,21 +16,32 @@
 ## AMT 파이프라인
 
 ```
-오디오 입력
+오디오 입력 (M4A/MP3/WAV)
   ↓
-① Basic Pitch     — end-to-end 딥러닝 음표 추출 (onset/frame 감지)
+① WAV 변환         — imageio-ffmpeg으로 비-WAV 파일 변환
   ↓
-② 잡음 필터       — 진폭·길이 기반 노이즈 음표 제거
+② CREPE + pYIN     — CREPE full 딥러닝 피치 추출 (MPS/CUDA GPU 지원)
+  하이브리드           pYIN 보조: CREPE 미감지 구간 피치 보완
   ↓
-③ 옥타브 중복 제거 — 배음/하모닉스 필터링
+③ onset 감지       — librosa onset_detect로 새 발성 시작점 감지
   ↓
-④ 동일음 병합     — 인접 동일 피치 병합 + 짧은음 흡수
+④ 히스테리시스      — 피치 변화 + onset 기반 이산 음표 세그멘테이션
+  세그멘테이션         5프레임 이동중앙값으로 비브라토 흡수
   ↓
-⑤ 조성 감지 + 보정 — Krumhansl-Schmuckler 프로파일, ±1 반음 스냅
+⑤ RMS 음량 필터    — 저음량 구간 음표 제거
   ↓
-⑥ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
+⑥ 옥타브 중복 제거 — 배음/하모닉스 필터링
   ↓
-⑦ pretty_midi     — MIDI 출력 (조성 정보 포함)
+⑦ 동일음 병합      — 인접 동일 피치 병합 + 짧은음 흡수
+                     (onset 분할 음표는 보존)
+  ↓
+⑧ 조성 감지 + 보정 — Krumhansl-Schmuckler 프로파일, ±1 반음 스냅
+  ↓
+⑨ 템포 감지 + 양자화 — 16분음표 그리드에 맞게 정량화
+  ↓
+⑩ pretty_midi      — MIDI 출력 (조성 정보 포함)
+  ↓
+⑪ Whisper 가사 추출 — 음절 단위 한국어 가사 + 음표 타임스탬프 매핑
 ```
 
 ## 프로젝트 구조
@@ -40,9 +52,10 @@ melody-sheet/
 ├── requirements.txt         # 패키지 목록
 ├── test.py                  # API 테스트 스크립트
 ├── core/
-│   ├── audio_to_midi.py     # 딥러닝 AMT: 오디오 → MIDI (Basic Pitch)
+│   ├── audio_to_midi.py     # CREPE+pYIN 하이브리드 AMT: 오디오 → MIDI
 │   ├── midi_to_sheet.py     # MIDI → 음표 JSON (Chord 객체 지원)
 │   ├── chord_detector.py    # 멜로디 기반 코드 감지
+│   ├── lyrics.py            # Whisper 가사 추출 + 음표 매핑
 │   └── transposer.py        # 키 변조
 ├── uploads/                 # 업로드 파일 임시 저장
 └── output/                  # 변환된 MIDI 저장
@@ -51,14 +64,21 @@ melody-sheet/
 ## 설치 및 실행
 
 ```bash
-python -m venv venv
-venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
 
-# PyTorch (CPU) 먼저 설치
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# PyTorch 설치 (GPU 지원 포함)
+# macOS (MPS):
+pip install torch torchvision torchaudio
+# CPU only:
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # 나머지 패키지
 pip install -r requirements.txt
+
+# Whisper 설치 (가사 추출용)
+pip install openai-whisper
 
 # 서버 실행
 uvicorn main:app --host 0.0.0.0 --port 8000
@@ -66,14 +86,15 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 ## API 엔드포인트
 
-### GET /
+### GET /health
 서버 상태 확인
 
 ### POST /api/audio-to-sheet
-오디오 파일(MP3/WAV)을 업로드하면 음표 리스트를 반환
+오디오 파일(M4A/MP3/WAV)을 업로드하면 음표 + 코드 + 가사를 반환
 
 **Request:** `multipart/form-data`
-- `file`: MP3 또는 WAV 파일
+- `file`: 오디오 파일
+- `key`: (선택) 조성 강제 지정 (예: `C`, `Am`)
 
 **Response:**
 ```json
@@ -82,6 +103,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000
     {"pitch": "C4", "duration": "quarter", "start_time": 0.0},
     {"pitch": "D4", "duration": "quarter", "start_time": 1.0}
   ],
+  "chords": [
+    {"chord": "C", "start_time": 0.0, "end_time": 4.0}
+  ],
+  "lyrics": ["하", "늘", "", "보", "다"],
+  "detected_key": "C major",
   "midi_file": "song.mid"
 }
 ```
@@ -123,7 +149,7 @@ app/
 │   ├── AudioToSheetScreen.js     # 멜로디 → 악보 화면 (마이크 녹음 + 파일 업로드)
 │   └── TransposeScreen.js        # 키 변조 화면
 └── components/
-    └── SheetMusic.web.js         # VexFlow 악보 렌더링 + 재생 하이라이트
+    └── SheetMusic.web.js         # VexFlow 악보 렌더링 + 재생 하이라이트 + 가사 표시
 ```
 
 앱 실행:
@@ -137,31 +163,37 @@ npx expo start                                # 모바일 (Expo Go)
 ## 개발 현황
 
 - [x] 백엔드 API 구축
-- [x] 오디오 → MIDI 변환 (Basic Pitch 딥러닝 AMT)
-- [x] 잡음 필터링 (진폭/길이 기반 + 옥타브 중복 제거)
+- [x] 오디오 → MIDI 변환 (Basic Pitch → CREPE+pYIN 하이브리드로 교체)
+- [x] CREPE full 모델 + MPS GPU 가속
+- [x] pYIN 보조 피치 추출 (CREPE 미감지 구간 보완)
+- [x] onset 감지로 동일 피치 내 새 음절 분리
+- [x] 히스테리시스 기반 음표 세그멘테이션 (비브라토 흡수)
+- [x] RMS 음량 기반 노이즈 필터링
+- [x] 잡음 필터링 (옥타브 중복 제거 + 짧은음 흡수)
 - [x] MIDI → 음표 JSON 변환
 - [x] 키 변조 기능
+- [x] 코드 감지 (Krumhansl-Schmuckler 조성 감지 + 다이아토닉 코드 배정)
+- [x] Whisper 기반 한국어 가사 추출 (음절 단위)
+- [x] 가사-음표 타임스탬프 정렬 (MIDI 오프셋 보정)
 - [x] React Native 앱 기본 구조
 - [x] 오디오 파일 업로드 화면
 - [x] 키 변조 화면
 - [x] 앱에서 마이크 녹음
-- [x] 웹(PC) 파일 업로드 422 오류 수정 (모바일은 정상)
-- [x] 앱에서 악보 렌더링 (VexFlow) — 웹 전용, 모바일은 음표 카드 폴백
-- [x] VexFlow 악보 개선 — 동적 stave 넓이, 행마다 음자리표, chords 재렌더링
-- [x] 코드 감지 (Krumhansl-Schmuckler 조성 감지 + 다이아토닉 코드 배정)
 - [x] 수동 키 선택 UI (21개 키 옵션)
+- [x] 앱에서 악보 렌더링 (VexFlow) — 웹 전용, 모바일은 음표 카드 폴백
+- [x] VexFlow 악보에 가사 렌더링 (Annotation BOTTOM)
+- [x] VexFlow 악보에 코드 심볼 표시 (Annotation TOP)
 - [x] 악보 재생 기능 (Web Audio API, triangle wave) + 재생 중 음표 하이라이트
 - [x] 노래 제목 입력란 — 악보 상단 표시 + 파일명 사용
-- [x] 조성 감지 강화 (threshold 하향, snap-down 보정, MIDI 조성 정보 삽입)
 - [x] PNG 다운로드 (Bravura 폰트 embed → canvas 변환)
+- [x] MIDI 다운로드
 - [x] M4A 등 다양한 오디오 포맷 지원 (imageio-ffmpeg)
-- [x] Oracle Cloud 서버 배포 (138.2.119.220, Ubuntu 24.04, CREPE tiny)
-- [x] GitHub Actions 자동 배포 (push → SSH → deploy.sh)
+- [x] Oracle Cloud 서버 배포 (Ubuntu 24.04)
+- [x] GitHub Actions 자동 배포
 
 ## 다음 할 일
 
-- [ ] Oracle Cloud VCN Security List 포트 8000 Ingress 오픈 (콘솔에서 직접)
-- [ ] 앱 API_URL을 로컬에서 서버 주소(138.2.119.220:8000)로 전환
-- [ ] ARM 인스턴스 확보 시 CREPE_MODEL=full 환경변수로 정확도 업그레이드
+- [ ] 도돌이표 (반복 구간) 자동 감지
+- [ ] 피치 추출 정확도 추가 개선
 - [ ] 모바일 앱 빌드 및 배포 (Expo EAS Build)
 - [ ] 코드 감지 정확도 개선

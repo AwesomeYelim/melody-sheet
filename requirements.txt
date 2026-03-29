@@ -14,7 +14,10 @@ librosa>=0.10.0
 scipy>=1.11.0
 
 # 딥러닝 AMT 파이프라인
-# torch: https://download.pytorch.org/whl/cpu (별도 설치 필요)
-torchcrepe>=0.0.24     # CREPE 피치 추정 (PyTorch 기반, Python 3.9 호환)
+# torch: 별도 설치 필요 (MPS GPU: pip install torch torchvision torchaudio)
+torchcrepe>=0.0.24     # CREPE 피치 추정 (PyTorch 기반)
 noisereduce>=3.0.0     # 배경 노이즈 제거
 pretty_midi>=0.2.10    # MIDI 생성
+
+# 가사 추출
+openai-whisper>=20231117  # Whisper 음성→텍스트 (한국어 지원)
