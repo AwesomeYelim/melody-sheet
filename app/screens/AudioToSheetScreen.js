@@ -69,6 +69,7 @@ export default function AudioToSheetScreen() {
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState([]);
   const [chords, setChords] = useState([]);
+  const [lyrics, setLyrics] = useState([]);
   const [selectedKey, setSelectedKey] = useState("auto");
   const [detectedKey, setDetectedKey] = useState(null);
   const [fileName, setFileName] = useState(null);
@@ -278,6 +279,7 @@ export default function AudioToSheetScreen() {
     setLoading(true);
     setNotes([]);
     setChords([]);
+    setLyrics([]);
     setErrorMsg(null);
     try {
       const formData = new FormData();
@@ -300,6 +302,7 @@ export default function AudioToSheetScreen() {
       const data = await res.json();
       setNotes(data.notes);
       setChords(data.chords || []);
+      setLyrics(data.lyrics || []);
       setDetectedKey(data.detected_key || null);
       setMidiFile(data.midi_file || null);
     } catch (error) {
@@ -462,7 +465,7 @@ export default function AudioToSheetScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
-          <SheetMusic notes={notes} chords={chords} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} midiFile={midiFile} />
+          <SheetMusic notes={notes} chords={chords} lyrics={lyrics} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} midiFile={midiFile} />
         </View>
       )}
     </ScrollView>

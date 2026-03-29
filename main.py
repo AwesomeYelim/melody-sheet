@@ -10,6 +10,7 @@ from core.audio_to_midi import convert_audio_to_midi, _load_audio
 from core.midi_to_sheet import midi_to_note_list
 from core.transposer import transpose_midi
 from core.chord_detector import detect_chords
+from core.lyrics import transcribe_lyrics, align_lyrics_to_notes
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -54,7 +55,7 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
 
     # 2. MIDI 변환 + 코드 감지 병렬 실행
     try:
-        midi_path = convert_audio_to_midi(upload_path)
+        midi_path, audio_offset = convert_audio_to_midi(upload_path)
     except Exception as e:
         os.remove(upload_path)
         raise HTTPException(status_code=500, detail=f"오디오→MIDI 변환 실패: {e}")
@@ -74,12 +75,20 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
     except Exception:
         chords = []
 
-    # 5. 업로드 파일은 디버깅용으로 보존
-    # os.remove(upload_path)
+    # 5. 가사 추출 (Whisper) + 음표 매핑
+    lyrics = []
+    try:
+        words = transcribe_lyrics(upload_path)
+        if words:
+            lyrics = align_lyrics_to_notes(words, notes, midi_path, audio_offset=audio_offset)
+            print(f"[AMT] 가사 매핑: {sum(1 for l in lyrics if l)}개 음표에 가사 할당")
+    except Exception as e:
+        print(f"[AMT] 가사 추출 실패: {e}")
 
     return {
         "notes": notes,
         "chords": chords,
+        "lyrics": lyrics,
         "detected_key": detected_key,
         "midi_file": os.path.basename(midi_path),
     }

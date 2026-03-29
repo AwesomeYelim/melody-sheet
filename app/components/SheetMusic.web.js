@@ -7,7 +7,7 @@ import VexFlowModule from "vexflow/bravura";
 import { API_URL } from "../config";
 
 // ── 상수 ──────────────────────────────────────────────────
-const STAVE_HEIGHT = 140;
+const STAVE_HEIGHT = 160;
 const STAVES_PER_ROW = 4;
 const BEATS_PER_MEASURE = 4;
 const MIN_STAVE_W = 160;
@@ -111,7 +111,7 @@ function buildMeasures(notes) {
       units = 0;
     }
 
-    cur.push({ ...note, _vd: vd, _u: u });
+    cur.push({ ...note, _vd: vd, _u: u, _lyric: note._lyric || "" });
     units += u;
 
     if (units >= MEASURE_UNITS) {
@@ -143,11 +143,14 @@ function finalizeMeasureObj(notes, usedUnits) {
   }).join(", ");
   // Track which tickable indices are real notes (not padding rests)
   const tickableMap = result.map((n, i) => (n.pitch !== "rest" ? i : -1)).filter((i) => i >= 0);
+  // Lyrics for each tickable (indexed by position in result)
+  const lyricMap = result.map((n) => (n.pitch !== "rest" ? (n._lyric || "") : ""));
   return {
     noteStr,
     startTime: notes[0].start_time ?? 0,
     tokenCount: result.length,
     tickableMap,
+    lyricMap,
   };
 }
 
@@ -257,7 +260,7 @@ function getChordAt(chords, startTime) {
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────
-export default function SheetMusic({ notes, chords = [], title = "", filename = "sheet_music", midiFile = null }) {
+export default function SheetMusic({ notes, chords = [], lyrics = [], title = "", filename = "sheet_music", midiFile = null }) {
   const containerRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
@@ -272,10 +275,19 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
 
   // API가 music21의 notesAndRests를 반환하므로 rest 제거
   // (buildMeasures가 자체적으로 패딩 rest를 생성함)
-  const pitchedNotes = React.useMemo(
-    () => (notes || []).filter((n) => n.pitch && n.pitch !== "rest"),
-    [notes],
-  );
+  const pitchedNotes = React.useMemo(() => {
+    const allNotes = notes || [];
+    const lyr = lyrics || [];
+    let lyricIdx = 0;
+    return allNotes
+      .map((n, i) => {
+        if (n.pitch && n.pitch !== "rest") {
+          return { ...n, _lyric: lyr[i] || "" };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [notes, lyrics]);
 
   useEffect(() => {
     handleStop();
@@ -332,21 +344,36 @@ export default function SheetMusic({ notes, chords = [], title = "", filename = 
           const w = calcStaveWidth(measures[i].tokenCount, isRowStart, isFirst);
 
           try {
-            const { noteStr, startTime, tickableMap } = measures[i];
+            const { noteStr, startTime, tickableMap, lyricMap } = measures[i];
             const voice = score.voice(score.notes(noteStr));
             voice.setMode(VF.Voice.Mode.SOFT);
             voiceInfos.push({ voice, tickableMap });
 
+            const tickables = voice.getTickables();
+
+            // 코드 심볼 (위)
             const chordName = getChordAt(chords, startTime);
-            if (chordName) {
-              const tickables = voice.getTickables();
-              if (tickables.length > 0) {
-                tickables[0].addModifier(
-                  new VF.Annotation(chordName)
-                    .setFont("Arial", 11, "bold")
-                    .setVerticalJustification(VF.Annotation.VerticalJustify.TOP),
-                  0
-                );
+            if (chordName && tickables.length > 0) {
+              tickables[0].addModifier(
+                new VF.Annotation(chordName)
+                  .setFont("Arial", 11, "bold")
+                  .setVerticalJustification(VF.Annotation.VerticalJustify.TOP),
+                0
+              );
+            }
+
+            // 가사 (아래)
+            if (lyricMap) {
+              for (let ti = 0; ti < tickables.length; ti++) {
+                const lyric = lyricMap[ti];
+                if (lyric) {
+                  tickables[ti].addModifier(
+                    new VF.Annotation(lyric)
+                      .setFont("Arial", 11, "normal")
+                      .setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM),
+                    0
+                  );
+                }
               }
             }
 
