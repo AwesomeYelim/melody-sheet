@@ -17,8 +17,10 @@ MIDI_MIN          = 36     # C2
 MIDI_MAX          = 96     # C7
 PITCH_FMIN        = 65.0   # C2
 PITCH_FMAX        = 2093.0 # C7
-MIN_NOTE_DURATION = 0.12   # 최소 음표 길이 (초)
+MIN_NOTE_DURATION = 0.12   # 최소 음표 길이 (초) — BPM 미지정 시 폴백
 MERGE_GAP         = 0.08   # 동일음 병합 간격 (초)
+WHISPER_GAP_PYIN_THRESHOLD = 0.3   # Whisper 갭 보정 시 pYIN 유효 판정 임계값
+RMS_THRESHOLD_PERCENTILE   = 10    # RMS 저음량 필터 하위 퍼센타일
 
 # ── 조성 템플릿 ──────────────────────────────────────────
 MAJOR_TEMPLATE = [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1]
@@ -73,7 +75,7 @@ CREPE_HOP    = 160      # ~10ms at 16kHz
 CREPE_SR     = 16000
 PYIN_HOP     = 512      # ~23ms at 22050Hz
 PERIOD_MIN   = 0.3      # CREPE periodicity 최소값
-HYSTERESIS   = 0.6      # 음표 경계 히스테리시스 (반음 단위)
+HYSTERESIS   = 1.2      # 음표 경계 히스테리시스 (반음 단위) — 비브라토 내성 확보
 
 
 def _run_crepe(wav_path: str):
@@ -365,14 +367,24 @@ def _merge_same_pitch(notes, max_gap=MERGE_GAP):
 
 
 # ── 짧은 음표 흡수 ──────────────────────────────────────
-def _absorb_short_notes(notes, min_dur=0.10):
-    """짧은 음표를 인접 음에 흡수 (피치 차이 2반음 이내)"""
+def _absorb_short_notes(notes: list, min_dur: float = MIN_NOTE_DURATION, bpm: float | None = None) -> list:
+    """짧은 음표를 인접 음에 흡수 (피치 차이 2반음 이내).
+
+    bpm이 주어지면 32분음표 기준(beat_duration / 8)으로 최소 길이를 적응적으로 계산.
+    bpm이 None이면 MIN_NOTE_DURATION(0.12초) 폴백.
+    """
     if len(notes) < 2:
         return notes
 
+    if bpm is not None and bpm > 0:
+        beat_duration = 60.0 / bpm
+        effective_min = beat_duration / 8  # 32분음표 기준
+    else:
+        effective_min = min_dur
+
     absorbed = []
     for n in notes:
-        if n["duration"] < min_dur and len(absorbed) > 0:
+        if n["duration"] < effective_min and len(absorbed) > 0:
             prev = absorbed[-1]
             if abs(n["midi_note"] - prev["midi_note"]) <= 2:
                 prev["duration"] = (n["start"] + n["duration"]) - prev["start"]
@@ -447,7 +459,9 @@ def _snap_to_key(notes, key_root, key_mode):
 def convert_audio_to_midi(audio_path: str) -> tuple:
     """
     AMT 파이프라인 (CREPE 기반).
-    반환: (midi_path, start_offset) — start_offset은 가사 매핑에 필요한 원본 시작 시간(초).
+    반환: (midi_path, start_offset, estimated_bpm)
+      — start_offset은 가사 매핑에 필요한 원본 시작 시간(초).
+      — estimated_bpm은 librosa로 추정한 BPM (60~180 범위).
     """
     print(f"[AMT] 분석 시작: {audio_path}")
 
@@ -465,7 +479,7 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
 
         # RMS 기반 저음량 구간 필터링
         rms = librosa.feature.rms(y=audio_data, hop_length=512)[0]
-        rms_threshold = np.percentile(rms[rms > 0], 25) if np.any(rms > 0) else 0.01
+        rms_threshold = np.percentile(rms[rms > 0], RMS_THRESHOLD_PERCENTILE) if np.any(rms > 0) else 0.01
         rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr_audio, hop_length=512)
 
         filtered_notes = []
@@ -494,7 +508,7 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
         midi_path = os.path.join(OUTPUT_DIR, f"{base_name}.mid")
         midi_obj.write(midi_path)
-        return midi_path, 0.0
+        return midi_path, 0.0, 100.0
 
     # ── 3. 옥타브 중복 제거 ──────────────────────────────────
     before = len(raw_notes)
@@ -627,9 +641,9 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
     base_name = os.path.splitext(os.path.basename(audio_path))[0]
     midi_path = os.path.join(OUTPUT_DIR, f"{base_name}.mid")
     midi_obj.write(midi_path)
-    print(f"[AMT] MIDI 저장 완료: {midi_path} (오프셋: {start_offset:.2f}s)")
+    print(f"[AMT] MIDI 저장 완료: {midi_path} (오프셋: {start_offset:.2f}s, BPM: {bpm:.1f})")
 
-    return midi_path, start_offset
+    return midi_path, start_offset, bpm
 
 
 # ── Whisper 기반 갭 보정 ────────────────────────────────────
@@ -711,14 +725,14 @@ def fill_gaps_with_whisper(audio_path: str, midi_path: str, syllables: list, aud
         if len(segment) < int(sr * 0.1):
             continue
 
-        # pYIN (매우 낮은 임계값)
+        # pYIN (WHISPER_GAP_PYIN_THRESHOLD 임계값으로 숨소리/잡음 필터링)
         f0, voiced, probs = librosa.pyin(
             segment, fmin=PITCH_FMIN, fmax=PITCH_FMAX, sr=sr
         )
         times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=PYIN_HOP)
         times += r_start - 0.1  # 절대 시간으로 변환
 
-        valid = voiced & (probs >= 0.05) & ~np.isnan(f0)
+        valid = voiced & (probs >= WHISPER_GAP_PYIN_THRESHOLD) & ~np.isnan(f0)
         if not np.any(valid):
             continue
 

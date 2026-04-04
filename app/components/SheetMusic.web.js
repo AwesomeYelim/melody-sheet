@@ -16,16 +16,26 @@ const NOTE_PX = 32;
 const DUR_MAP = {
   whole: "w", half: "h", quarter: "q",
   eighth: "8", "16th": "16", "32nd": "32",
+  "dotted whole": "wd", "dotted half": "hd",
+  "dotted quarter": "qd", "dotted eighth": "8d",
 };
-const DUR_UNITS = { w: 32, h: 16, q: 8, "8": 4, "16": 2, "32": 1 };
+const DUR_UNITS = {
+  w: 32, h: 16, q: 8, "8": 4, "16": 2, "32": 1,
+  wd: 48, hd: 24, qd: 12, "8d": 6,
+};
 const MEASURE_UNITS = BEATS_PER_MEASURE * 8;
 
 const DEFAULT_BPM = 100;
-const BEAT_SEC = 60 / DEFAULT_BPM;
-const DUR_SEC = {
-  whole: BEAT_SEC * 4, half: BEAT_SEC * 2, quarter: BEAT_SEC,
-  eighth: BEAT_SEC / 2, "16th": BEAT_SEC / 4, "32nd": BEAT_SEC / 8,
-};
+
+function makeDurSec(bpm) {
+  const beatSec = 60 / bpm;
+  return {
+    whole: beatSec * 4, half: beatSec * 2, quarter: beatSec,
+    eighth: beatSec / 2, "16th": beatSec / 4, "32nd": beatSec / 8,
+    "dotted whole": beatSec * 6, "dotted half": beatSec * 3,
+    "dotted quarter": beatSec * 1.5, "dotted eighth": beatSec * 0.75,
+  };
+}
 
 // ── 피치 → 주파수 변환 ────────────────────────────────────
 function pitchToFreq(pitch) {
@@ -42,9 +52,13 @@ function pitchToFreq(pitch) {
 }
 
 // ── Web Audio API 재생 ────────────────────────────────────
-function scheduleNotes(notes) {
+function scheduleNotes(notes, bpm) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
+
+  const effectiveBpm = bpm || DEFAULT_BPM;
+  const durSec = makeDurSec(effectiveBpm);
+  const beatSec = 60 / effectiveBpm;
 
   const ctx = new AudioCtx();
   const masterGain = ctx.createGain();
@@ -57,7 +71,7 @@ function scheduleNotes(notes) {
   let noteIndex = 0;
 
   for (const note of notes) {
-    const dur = DUR_SEC[note.duration] || BEAT_SEC;
+    const dur = durSec[note.duration] || beatSec;
     const freq = pitchToFreq(note.pitch);
 
     if (freq) {
@@ -260,7 +274,7 @@ function getChordAt(chords, startTime) {
 }
 
 // ── 컴포넌트 ──────────────────────────────────────────────
-export default function SheetMusic({ notes, chords = [], lyrics = [], title = "", filename = "sheet_music", midiFile = null }) {
+export default function SheetMusic({ notes, chords = [], lyrics = [], title = "", filename = "sheet_music", midiFile = null, bpm = null }) {
   const containerRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
@@ -438,7 +452,7 @@ export default function SheetMusic({ notes, chords = [], lyrics = [], title = ""
   async function handlePlay() {
     if (isPlaying) { handleStop(); return; }
 
-    const result = scheduleNotes(pitchedNotes);
+    const result = scheduleNotes(pitchedNotes, bpm);
     if (!result) return;
 
     if (result.ctx.state === "suspended") {

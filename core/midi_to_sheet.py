@@ -29,12 +29,13 @@ def _to_flat_name(pitch_name_with_octave: str, use_flats: bool) -> str:
 
 # quarterLength → 표준 duration type 매핑 (내림차순)
 _QL_TO_TYPE = [
+    (6.0, "dotted whole"),
     (4.0, "whole"),
-    (3.0, "half"),       # 점2분음표 → 2분음표로 근사
+    (3.0, "dotted half"),
     (2.0, "half"),
-    (1.5, "quarter"),    # 점4분음표 → 4분음표로 근사
+    (1.5, "dotted quarter"),
     (1.0, "quarter"),
-    (0.75, "eighth"),
+    (0.75, "dotted eighth"),
     (0.5, "eighth"),
     (0.375, "16th"),
     (0.25, "16th"),
@@ -43,12 +44,18 @@ _QL_TO_TYPE = [
 
 def _resolve_duration(element) -> str:
     """
-    music21 duration type이 'complex'이면 quarterLength 기준으로 가장 가까운
-    표준 음표 길이로 변환합니다.
+    music21 duration을 프론트엔드 호환 문자열로 변환합니다.
+    - 점음표(dots >= 1)이면 "dotted {type}" 형태로 반환
+    - 'complex' 타입이면 quarterLength 기준으로 가장 가까운 표준 음표 길이로 변환
     """
     dtype = element.duration.type
+    dots = getattr(element.duration, "dots", 0)
+
     if dtype != "complex":
+        if dots >= 1:
+            return f"dotted {dtype}"
         return dtype
+
     ql = float(element.duration.quarterLength)
     for threshold, name in _QL_TO_TYPE:
         if ql >= threshold:

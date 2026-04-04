@@ -68,10 +68,10 @@ core/lyrics.py
 - **BUG-003**: `lyrics.py:100` — rest 포함 인덱스 불일치 → 가사 어긋남
 - **BUG-004**: `chord_detector.py` — 다이아토닉 7개만, 7th/sus/세컨더리 없음
 - **BUG-009**: `midi_to_sheet.py:31` — 점음표 리듬 손실 (dotted half→half 등)
-- **BUG-011**: `audio_to_midi.py:292` — MIN_NOTE_DURATION=120ms 고정 → 빠른 곡 32분음표 소멸
-- **BUG-012**: `audio_to_midi.py:721` — Whisper 갭 pYIN 임계값 0.05 → 숨소리가 음표로
-- **BUG-013**: `audio_to_midi.py:259` — HYSTERESIS=0.6 → 비브라토에서 음표 쪼개짐
-- **BUG-014**: `audio_to_midi.py:468` — RMS 필터 p25 → 여린 구간 전체 삭제
+- **BUG-011**: `audio_to_midi.py:292` — MIN_NOTE_DURATION=120ms 고정 → 빠른 곡 32분음표 소멸 (**해결됨**)
+- **BUG-012**: `audio_to_midi.py:721` — Whisper 갭 pYIN 임계값 0.05 → 숨소리가 음표로 (**해결됨**)
+- **BUG-013**: `audio_to_midi.py:259` — HYSTERESIS=0.6 → 비브라토에서 음표 쪼개짐 (**해결됨**)
+- **BUG-014**: `audio_to_midi.py:468` — RMS 필터 p25 → 여린 구간 전체 삭제 (**해결됨**)
 - **BUG-015**: `SheetMusic.web.js:12` — 4/4 하드코딩 → 3/4, 6/8 마디 틀림
 - **BUG-016**: `SheetMusic.web.js:23` — BPM 하드코딩 → 재생 속도 불일치
 - **BUG-017**: `SheetMusic.web.js:366` — lyricMap rest 인덱싱 → 악보 가사 어긋남
@@ -93,7 +93,7 @@ core/lyrics.py
 
 ### 멜로디 악보화
 **P0**: ~~BUG-001 반환값 통일~~ (해결됨)
-**P1**: BUG-011 MIN_NOTE_DURATION 적응형, BUG-012 pYIN 임계값, BUG-013 HYSTERESIS, BUG-014 RMS, BUG-009 점음표, BUG-015+016 박자/BPM 전달
+**P1**: ~~BUG-011 MIN_NOTE_DURATION 적응형~~ (해결됨), ~~BUG-012 pYIN 임계값~~ (해결됨), ~~BUG-013 HYSTERESIS~~ (해결됨), ~~BUG-014 RMS~~ (해결됨), ~~BUG-009 점음표~~ (해결됨), BUG-015+016 박자/BPM 전달
 **P2**: BUG-002 옥타브 중복, BUG-021 숨쉬기 갭, BUG-020 snap_to_key, BUG-024 포르타멘토
 
 ### 키 조정
@@ -106,16 +106,25 @@ core/lyrics.py
 ## 3-Agent 워크플로우 (계획표 수신 시 필수 적용)
 
 사용자가 개선 계획표나 작업 지시를 주면 반드시 아래 워크플로우를 따른다.
-`.claude/agents/prompts.py`에 정의된 프롬프트 상수를 사용한다.
+`.claude/agents/` 아래 역할별 md 파일로 관리, `prompts.py`가 조합.
 
-### 프롬프트 상수
+### 에이전트 파일 구조
+```
+.claude/agents/
+  ├── context.md          # 공통 프로젝트 컨텍스트 (버그 카탈로그, 제약조건, 파일별 주의사항)
+  ├── planner.md          # 시행자 역할 정의
+  ├── executor.md         # 수행자 역할 정의
+  ├── executor-retry.md   # 수행자 재시도 역할 정의
+  ├── reviewer.md         # 검사자 역할 정의 (문서 갱신 + git push 포함)
+  └── prompts.py          # md 파일을 읽어 프롬프트 상수로 조합
+```
+
+### 프롬프트 상수 (prompts.py에서 export)
 ```python
-from .claude.agents.prompts import (
-    PLANNER_PROMPT,        # 시행자 — .format(plan=...)
-    EXECUTOR_PROMPT,       # 수행자 — .format(task=...)
-    EXECUTOR_RETRY_PROMPT, # 수행자 재시도 — .format(task=..., feedback=...)
-    REVIEWER_PROMPT,       # 검사자 — .format(task=..., changes=...)
-)
+PLANNER_PROMPT        # 시행자 — .format(plan=...)
+EXECUTOR_PROMPT       # 수행자 — .format(task=...)
+EXECUTOR_RETRY_PROMPT # 수행자 재시도 — .format(task=..., feedback=...)
+REVIEWER_PROMPT       # 검사자 — .format(task=..., changes=...)
 ```
 
 ### 1단계: 시행자 (Plan Agent)

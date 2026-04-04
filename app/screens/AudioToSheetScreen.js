@@ -76,6 +76,7 @@ export default function AudioToSheetScreen() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [songTitle, setSongTitle] = useState("");
   const [midiFile, setMidiFile] = useState(null);
+  const [bpm, setBpm] = useState(null);
 
   const KEY_OPTIONS = [
     "auto",
@@ -280,6 +281,7 @@ export default function AudioToSheetScreen() {
     setNotes([]);
     setChords([]);
     setLyrics([]);
+    setBpm(null);
     setErrorMsg(null);
     try {
       const formData = new FormData();
@@ -305,6 +307,7 @@ export default function AudioToSheetScreen() {
       setLyrics(data.lyrics || []);
       setDetectedKey(data.detected_key || null);
       setMidiFile(data.midi_file || null);
+      setBpm(data.bpm || null);
     } catch (error) {
       const msg = error.message || "분석 중 오류가 발생했습니다.";
       setErrorMsg(msg);
@@ -465,7 +468,7 @@ export default function AudioToSheetScreen() {
       {notes.length > 0 && (
         <View style={styles.resultBox}>
           <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
-          <SheetMusic notes={notes} chords={chords} lyrics={lyrics} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} midiFile={midiFile} />
+          <SheetMusic notes={notes} chords={chords} lyrics={lyrics} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} midiFile={midiFile} bpm={bpm} />
         </View>
       )}
     </ScrollView>

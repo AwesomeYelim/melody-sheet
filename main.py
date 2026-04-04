@@ -55,7 +55,7 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
 
     # 2. MIDI 변환 + 코드 감지 병렬 실행
     try:
-        midi_path, audio_offset = convert_audio_to_midi(upload_path)
+        midi_path, audio_offset, estimated_bpm = convert_audio_to_midi(upload_path)
     except Exception as e:
         os.remove(upload_path)
         raise HTTPException(status_code=500, detail=f"오디오→MIDI 변환 실패: {e}")
@@ -100,6 +100,7 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
         "lyrics": lyrics,
         "detected_key": detected_key,
         "midi_file": os.path.basename(midi_path),
+        "bpm": round(estimated_bpm, 1),
     }
 
 
@@ -126,8 +127,7 @@ async def transpose(
     # 2. 변조
     result = transpose_midi(upload_path, target_key)
 
-    # 3. 업로드 파일 정리
-    os.remove(upload_path)
+    # 3. 업로드 파일 보존 (정확도 검사용)
 
     return {
         "original_key": result["original_key"],
