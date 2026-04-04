@@ -117,66 +117,137 @@ def detect_chords(audio, sr, notes: list, beats_per_measure: int = 4, forced_key
     detected_key = _NOTE_NAMES[root_idx] + ('m' if scale == 'minor' else '')
     diatonic = _build_diatonic(root_idx, scale)
 
-    # 2. 마디 분할 (박자 기반)
+    # 2. 마디 분할 (박자 기반) — 반마디(half-measure) 단위로 분리
+    half_beats = beats_per_measure / 2.0
     measures = []
-    cur_notes, cur_beats, cur_start = [], 0.0, 0.0
+    cur_notes_1st, cur_notes_2nd = [], []
+    cur_beats, cur_start = 0.0, 0.0
+    in_second_half = False
+    mid_time = None
 
     for note in notes:
         dur = _DUR_BEATS.get(note.get('duration', 'quarter'), 1.0)
-        cur_notes.append(note)
-        cur_beats += dur
 
-        if cur_beats >= beats_per_measure - 0.01:
-            end_t = note.get('start_time', cur_start) + dur
-            measures.append({'notes': cur_notes[:], 'start': cur_start, 'end': end_t})
-            cur_start = end_t
-            cur_notes, cur_beats = [], 0.0
+        if not in_second_half and cur_beats + dur >= half_beats - 0.01:
+            # 이 음표가 첫 반마디의 마지막 음표(또는 경계를 넘는 음표)
+            cur_notes_1st.append(note)
+            cur_beats += dur
+            note_end = note.get('start_time', cur_start) + dur
+            mid_time = note_end
+            in_second_half = True
 
-    if cur_notes:
+            if cur_beats >= beats_per_measure - 0.01:
+                # 첫 반마디가 마디 전체를 채움 (두번째 반마디 비어있음)
+                measures.append({
+                    'notes_1st': cur_notes_1st[:],
+                    'notes_2nd': [],
+                    'start': cur_start,
+                    'mid': mid_time,
+                    'end': note_end,
+                })
+                cur_notes_1st, cur_notes_2nd = [], []
+                cur_beats, cur_start = 0.0, note_end
+                in_second_half = False
+                mid_time = None
+        elif in_second_half:
+            cur_notes_2nd.append(note)
+            cur_beats += dur
+
+            if cur_beats >= beats_per_measure - 0.01:
+                note_end = note.get('start_time', cur_start) + dur
+                measures.append({
+                    'notes_1st': cur_notes_1st[:],
+                    'notes_2nd': cur_notes_2nd[:],
+                    'start': cur_start,
+                    'mid': mid_time,
+                    'end': note_end,
+                })
+                cur_notes_1st, cur_notes_2nd = [], []
+                cur_beats, cur_start = 0.0, note_end
+                in_second_half = False
+                mid_time = None
+        else:
+            cur_notes_1st.append(note)
+            cur_beats += dur
+
+    # 잔여 음표 처리
+    if cur_notes_1st or cur_notes_2nd:
         last = notes[-1]
-        end_t = last.get('start_time', cur_start) + _DUR_BEATS.get(last.get('duration','quarter'), 1.0)
-        measures.append({'notes': cur_notes, 'start': cur_start, 'end': end_t})
+        end_t = last.get('start_time', cur_start) + _DUR_BEATS.get(last.get('duration', 'quarter'), 1.0)
+        if mid_time is None:
+            mid_time = (cur_start + end_t) / 2.0
+        measures.append({
+            'notes_1st': cur_notes_1st,
+            'notes_2nd': cur_notes_2nd,
+            'start': cur_start,
+            'mid': mid_time,
+            'end': end_t,
+        })
 
-    # 3. 각 마디 → 최적 코드 선택
-    results = []
-    prev_name = None
-
-    for m in measures:
-        # 지속시간 가중 pitch class 히스토그램
+    # ── 헬퍼: 음표 리스트 → 최적 코드 이름 ──
+    def _best_chord(note_list, is_first_in_measure=False):
+        """주어진 음표 리스트에서 최적 다이아토닉 코드를 선택한다."""
         hist = np.zeros(12)
-        for n in m['notes']:
+        for n in note_list:
             pc = _pitch_to_class(n.get('pitch', 'rest'))
             if pc is None:
                 continue
             dur = _DUR_BEATS.get(n.get('duration', 'quarter'), 1.0)
             # 강박(첫 음표) 가중치 2배
-            if n is m['notes'][0]:
+            if is_first_in_measure and n is note_list[0]:
                 dur *= 2.0
             hist[pc] += dur
 
         total = hist.sum()
         if total < 1e-6:
-            chord_name = prev_name or diatonic[0]['name']
-        else:
-            hist = hist / total
-            best_name, best_score = diatonic[0]['name'], -1.0
-            for chord in diatonic:
-                # 코드 음의 히스토그램 합 × 하모닉 안정도 가중치
-                score = sum(hist[t] for t in chord['tones']) * chord['weight']
-                if score > best_score:
-                    best_score = score
-                    best_name = chord['name']
-            chord_name = best_name
+            return None  # 음표 없음
 
-        # 인접한 같은 코드 병합
-        if results and results[-1]['chord'] == chord_name:
-            results[-1]['end_time'] = round(m['end'], 3)
+        hist = hist / total
+        best_name, best_score = diatonic[0]['name'], -1.0
+        for chord in diatonic:
+            score = sum(hist[t] for t in chord['tones']) * chord['weight']
+            if score > best_score:
+                best_score = score
+                best_name = chord['name']
+        return best_name
+
+    # 3. 각 마디 → 반마디별 코드 감지 후 병합
+    results = []
+    prev_name = None
+
+    for m in measures:
+        chord_1st = _best_chord(m['notes_1st'], is_first_in_measure=True)
+        chord_2nd = _best_chord(m['notes_2nd'], is_first_in_measure=False)
+
+        # 빈 반마디 → 이전 코드 또는 다른 반마디 코드로 대체
+        if chord_1st is None and chord_2nd is None:
+            chord_1st = prev_name or diatonic[0]['name']
+            chord_2nd = chord_1st
+        elif chord_1st is None:
+            chord_1st = chord_2nd
+        elif chord_2nd is None:
+            chord_2nd = chord_1st
+
+        if chord_1st == chord_2nd:
+            # 두 반마디 코드가 같으면 마디 전체를 하나의 코드로
+            segments = [(chord_1st, m['start'], m['end'])]
         else:
-            results.append({
-                'chord': chord_name,
-                'start_time': round(m['start'], 3),
-                'end_time': round(m['end'], 3),
-            })
-        prev_name = chord_name
+            # 두 반마디 코드가 다르면 2개 코드로 분리
+            segments = [
+                (chord_1st, m['start'], m['mid']),
+                (chord_2nd, m['mid'], m['end']),
+            ]
+
+        for chord_name, seg_start, seg_end in segments:
+            # 인접한 같은 코드 병합
+            if results and results[-1]['chord'] == chord_name:
+                results[-1]['end_time'] = round(seg_end, 3)
+            else:
+                results.append({
+                    'chord': chord_name,
+                    'start_time': round(seg_start, 3),
+                    'end_time': round(seg_end, 3),
+                })
+            prev_name = chord_name
 
     return results, detected_key
