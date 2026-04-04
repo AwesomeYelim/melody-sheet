@@ -40,7 +40,7 @@ core/lyrics.py
 
 ## 핵심 제약 조건 (절대 위반 금지)
 1. `audio_to_midi.py` 12단계 파이프라인 순서 변경 금지
-2. API 응답 형식: `{notes, chords, lyrics, detected_key, midi_file}`
+2. API 응답 형식: `{notes, chords, lyrics, detected_key, midi_file, bpm}`
 3. 음표 형식: `{pitch: "C4", duration: "quarter", start_time: 0.0}`
 4. 코드 형식: `{chord: "Am", start_time: 0.0, end_time: 2.0}`
 5. VexFlow EasyScore 포맷: `"C#4/q"`, `"B4/wr"` (rest)
@@ -67,13 +67,13 @@ core/lyrics.py
 - **BUG-002**: `audio_to_midi.py:322` — 옥타브 중복 제거 O(n²) + median 기반으로 실제 음표 삭제
 - **BUG-003**: `lyrics.py:100` — rest 포함 인덱스 불일치 → 가사 어긋남
 - **BUG-004**: `chord_detector.py` — 다이아토닉 7개만, 7th/sus/세컨더리 없음
-- **BUG-009**: `midi_to_sheet.py:31` — 점음표 리듬 손실 (dotted half→half 등)
+- **BUG-009**: `midi_to_sheet.py:31` — 점음표 리듬 손실 (dotted half→half 등) (**해결됨**)
 - **BUG-011**: `audio_to_midi.py:292` — MIN_NOTE_DURATION=120ms 고정 → 빠른 곡 32분음표 소멸 (**해결됨**)
 - **BUG-012**: `audio_to_midi.py:721` — Whisper 갭 pYIN 임계값 0.05 → 숨소리가 음표로 (**해결됨**)
 - **BUG-013**: `audio_to_midi.py:259` — HYSTERESIS=0.6 → 비브라토에서 음표 쪼개짐 (**해결됨**)
 - **BUG-014**: `audio_to_midi.py:468` — RMS 필터 p25 → 여린 구간 전체 삭제 (**해결됨**)
 - **BUG-015**: `SheetMusic.web.js:12` — 4/4 하드코딩 → 3/4, 6/8 마디 틀림
-- **BUG-016**: `SheetMusic.web.js:23` — BPM 하드코딩 → 재생 속도 불일치
+- **BUG-016**: `SheetMusic.web.js:23` — BPM 하드코딩 → 재생 속도 불일치 (**해결됨**)
 - **BUG-017**: `SheetMusic.web.js:366` — lyricMap rest 인덱싱 → 악보 가사 어긋남
 - **BUG-018**: `transposer.py:38` — 키 분석 장/단 미구분 → 변조 반음 수 틀림
 - **BUG-019**: `chord_detector.py:129` — 마디당 1코드 → 코드 변경 누락
@@ -93,7 +93,7 @@ core/lyrics.py
 
 ### 멜로디 악보화
 **P0**: ~~BUG-001 반환값 통일~~ (해결됨)
-**P1**: ~~BUG-011 MIN_NOTE_DURATION 적응형~~ (해결됨), ~~BUG-012 pYIN 임계값~~ (해결됨), ~~BUG-013 HYSTERESIS~~ (해결됨), ~~BUG-014 RMS~~ (해결됨), ~~BUG-009 점음표~~ (해결됨), BUG-015+016 박자/BPM 전달
+**P1**: ~~BUG-011 MIN_NOTE_DURATION 적응형~~ (해결됨), ~~BUG-012 pYIN 임계값~~ (해결됨), ~~BUG-013 HYSTERESIS~~ (해결됨), ~~BUG-014 RMS~~ (해결됨), ~~BUG-009 점음표~~ (해결됨), BUG-015 박자 전달, ~~BUG-016 BPM 전달~~ (해결됨)
 **P2**: BUG-002 옥타브 중복, BUG-021 숨쉬기 갭, BUG-020 snap_to_key, BUG-024 포르타멘토
 
 ### 키 조정
