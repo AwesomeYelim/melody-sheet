@@ -8,7 +8,7 @@
   - 12단계 파이프라인: WAV변환 → CREPE피치 → 옥타브필터 → 동일음병합 → 짧은음흡수 → 조성감지 → 조성보정 → 재병합 → 템포양자화 → 겹침해소 → 음역대정제 → MIDI생성
 - `core/midi_to_sheet.py` — MIDI→JSON 음표 변환 (music21 기반, 120줄)
 - `core/chord_detector.py` — Krumhansl-Schmuckler 키 감지 + 다이아토닉 코드 배정 (182줄)
-- `core/lyrics.py` — Whisper 한국어 가사 추출 + 음표 정렬 (140줄)
+- `core/lyrics.py` — Whisper 한국어 가사 추출 + 음표 정렬 (~157줄)
 - `core/transposer.py` — 키 변환 + 손상 MIDI 에러핸들링 (187줄)
 - `test.py` — 테스트용 WAV 생성 + API 호출 테스트
 
@@ -65,7 +65,7 @@ core/lyrics.py
 
 ### MAJOR (정확도 직결)
 - **BUG-002**: `audio_to_midi.py:322` — 옥타브 중복 제거 O(n²) + median 기반으로 실제 음표 삭제
-- **BUG-003**: `lyrics.py:100` — rest 포함 인덱스 불일치 → 가사 어긋남
+- **BUG-003**: `lyrics.py:100` — rest 포함 인덱스 불일치 → 가사 어긋남 (**해결됨**)
 - **BUG-004**: `chord_detector.py` — 다이아토닉 7개만, 7th/sus/세컨더리 없음
 - **BUG-009**: `midi_to_sheet.py:31` — 점음표 리듬 손실 (dotted half→half 등) (**해결됨**)
 - **BUG-011**: `audio_to_midi.py:292` — MIN_NOTE_DURATION=120ms 고정 → 빠른 곡 32분음표 소멸 (**해결됨**)
@@ -74,9 +74,9 @@ core/lyrics.py
 - **BUG-014**: `audio_to_midi.py:468` — RMS 필터 p25 → 여린 구간 전체 삭제 (**해결됨**)
 - **BUG-015**: `SheetMusic.web.js:12` — 4/4 하드코딩 → 3/4, 6/8 마디 틀림
 - **BUG-016**: `SheetMusic.web.js:23` — BPM 하드코딩 → 재생 속도 불일치 (**해결됨**)
-- **BUG-017**: `SheetMusic.web.js:366` — lyricMap rest 인덱싱 → 악보 가사 어긋남
+- **BUG-017**: `SheetMusic.web.js:366` — lyricMap rest 인덱싱 → 악보 가사 어긋남 (**해결됨**)
 - **BUG-018**: `transposer.py:38` — 키 분석 장/단 미구분 → 변조 반음 수 틀림
-- **BUG-019**: `chord_detector.py:129` — 마디당 1코드 → 코드 변경 누락
+- **BUG-019**: `chord_detector.py:129` — 마디당 1코드 → 코드 변경 누락 (**해결됨**)
 
 ### MINOR (품질/UX)
 - **BUG-005**: `midi_to_sheet.py:19` — _to_flat_name 이중샵/옥타브>9 미처리

@@ -76,10 +76,25 @@ def transcribe_lyrics(audio_path: str) -> list:
     return syllables
 
 
+def _is_rest(note: dict) -> bool:
+    """
+    음표가 rest(쉼표)인지 판별.
+    - pitch가 "rest"이거나 비어 있으면 rest
+    - pitch가 없거나 None이면 rest
+    """
+    pitch = note.get("pitch")
+    if not pitch or pitch == "rest":
+        return True
+    return False
+
+
 def align_lyrics_to_notes(syllables: list, notes: list, midi_path: str, audio_offset: float = 0.0) -> list:
     """
     Whisper 음절 타임스탬프(초)를 음표에 매핑.
     MIDI 파일에서 실제 초 단위 타이밍을 읽어서 매칭.
+
+    반환값: notes와 1:1 대응하는 문자열 리스트.
+           rest 음표에는 빈 문자열 ""이 할당됨.
 
     audio_offset: convert_audio_to_midi에서 제거된 시작 오프셋(초).
                   MIDI 음표 시간에 이 값을 더해야 Whisper 타임스탬프와 맞음.
@@ -87,18 +102,19 @@ def align_lyrics_to_notes(syllables: list, notes: list, midi_path: str, audio_of
     if not syllables or not notes:
         return [""] * len(notes)
 
-    # MIDI에서 초 단위 시간
+    # MIDI에서 초 단위 시간 (pretty_midi는 rest를 포함하지 않음)
     midi = pretty_midi.PrettyMIDI(midi_path)
     midi_notes = []
     if midi.instruments:
         midi_notes = sorted(midi.instruments[0].notes, key=lambda n: n.start)
 
-    # notes[i] → 초 단위 시간 매핑 (rest 제외)
+    # notes[i] → 초 단위 시간 매핑
+    # rest는 건너뛰고 pitched 음표만 midi_notes에 대응시킴
     # audio_offset을 더해서 원래 오디오 시간 복원
     note_times_sec = []
     midi_idx = 0
     for note in notes:
-        if note.get("pitch") == "rest":
+        if _is_rest(note):
             note_times_sec.append(None)
         elif midi_idx < len(midi_notes):
             note_times_sec.append(midi_notes[midi_idx].start + audio_offset)
@@ -113,15 +129,17 @@ def align_lyrics_to_notes(syllables: list, notes: list, midi_path: str, audio_of
     if syllables:
         print(f"[Lyrics] 가사 시간 범위: {syllables[0]['start']:.2f}s ~ {syllables[-1]['end']:.2f}s")
 
-    # 음절 매핑
-    lyrics = []
+    # 음절 매핑: rest를 건너뛰고 pitched 음표에만 가사를 할당
+    lyrics = [""] * len(notes)
     syl_idx = 0
 
     for i, note in enumerate(notes):
-        t_sec = note_times_sec[i]
+        # rest 음표는 건너뜀 (빈 문자열 유지)
+        if _is_rest(note):
+            continue
 
-        if t_sec is None or note.get("pitch") == "rest" or syl_idx >= len(syllables):
-            lyrics.append("")
+        t_sec = note_times_sec[i]
+        if t_sec is None or syl_idx >= len(syllables):
             continue
 
         # 이미 지나간 음절 스킵
@@ -132,9 +150,7 @@ def align_lyrics_to_notes(syllables: list, notes: list, midi_path: str, audio_of
 
         # 음표 시작과 음절이 겹치면 매핑
         if syl["start"] <= t_sec + 0.5 and syl["end"] >= t_sec - 0.3:
-            lyrics.append(syl["char"])
+            lyrics[i] = syl["char"]
             syl_idx += 1
-        else:
-            lyrics.append("")
 
     return lyrics
