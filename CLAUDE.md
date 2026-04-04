@@ -9,7 +9,7 @@
 - `core/midi_to_sheet.py` — MIDI→JSON 음표 변환 (music21 기반, 120줄)
 - `core/chord_detector.py` — Krumhansl-Schmuckler 키 감지 + 다이아토닉 코드 배정 (182줄)
 - `core/lyrics.py` — Whisper 한국어 가사 추출 + 음표 정렬 (140줄)
-- `core/transposer.py` — 키 변환 (75줄)
+- `core/transposer.py` — 키 변환 + 손상 MIDI 에러핸들링 (187줄)
 - `test.py` — 테스트용 WAV 생성 + API 호출 테스트
 
 ### 프론트엔드 (React Native / Expo Web)
@@ -28,7 +28,7 @@ main.py
   ├→ core/chord_detector.py  (detect_chords)
   ├→ core/lyrics.py          (transcribe_lyrics, align_lyrics_to_notes)
   └→ core/transposer.py      (transpose_midi)
-       └→ core/midi_to_sheet.py (_resolve_duration)
+       └→ core/midi_to_sheet.py (_resolve_duration, _to_flat_name)
 core/lyrics.py
   └→ core/audio_to_midi.py   (_ensure_wav)
 ```
@@ -85,8 +85,8 @@ core/lyrics.py
 - **BUG-010**: `SheetMusic.web.js:293` — useEffect 의존성 누락
 - **BUG-020**: `audio_to_midi.py:440` — snap_to_key 양방향 모호 시 무조건 아래로
 - **BUG-021**: `audio_to_midi.py:210` — 숨쉬기 갭 200ms 브릿지 → 프레이즈 소실
-- **BUG-022**: `transposer.py:58` — _to_flat_name 미적용 (D# vs Eb 불일치)
-- **BUG-023**: `transposer.py:35` — 손상 MIDI 에러핸들링 없음
+- **BUG-022**: `transposer.py:58` — _to_flat_name 미적용 (D# vs Eb 불일치) (**해결됨**)
+- **BUG-023**: `transposer.py:35` — 손상 MIDI 에러핸들링 없음 (**해결됨**)
 - **BUG-024**: 포르타멘토 미처리 → 보컬 런이 평균 피치 1개로
 
 ## 개선 로드맵
@@ -98,7 +98,7 @@ core/lyrics.py
 
 ### 키 조정
 **P0**: ~~BUG-006 단조 키 추가~~ (해결됨)
-**P1**: BUG-018 장/단 구분, BUG-023 에러핸들링, BUG-022 표기 통일
+**P1**: BUG-018 장/단 구분, ~~BUG-023 에러핸들링~~ (해결됨), ~~BUG-022 표기 통일~~ (해결됨)
 **P2**: 변조 후 음역대 확인+경고
 
 ---

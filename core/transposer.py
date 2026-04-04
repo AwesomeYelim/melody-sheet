@@ -1,7 +1,8 @@
 import logging
 import os
 import music21
-from core.midi_to_sheet import _resolve_duration
+import pretty_midi
+from core.midi_to_sheet import _resolve_duration, _to_flat_name
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,35 @@ def transpose_midi(midi_path: str, target_key: str) -> dict:
     if target_key not in KEY_SEMITONES:
         raise ValueError(f"지원하지 않는 키입니다: {target_key}. 사용 가능: {list(KEY_SEMITONES.keys())}")
 
-    score = music21.converter.parse(midi_path)
+    # ── MIDI 파일 파싱 (music21) ──
+    try:
+        score = music21.converter.parse(midi_path)
+    except Exception as e:
+        raise ValueError(
+            f"MIDI 파일을 파싱할 수 없습니다 (music21): {midi_path}. "
+            f"파일이 손상되었거나 유효한 MIDI 형식이 아닙니다. 원본 오류: {e}"
+        ) from e
+
+    # ── MIDI 파일 검증 (pretty_midi) ──
+    try:
+        pm = pretty_midi.PrettyMIDI(midi_path)
+    except Exception as e:
+        raise ValueError(
+            f"MIDI 파일을 파싱할 수 없습니다 (pretty_midi): {midi_path}. "
+            f"파일이 손상되었거나 유효한 MIDI 형식이 아닙니다. 원본 오류: {e}"
+        ) from e
+
+    # ── 빈 MIDI 파일 검사 (음표 0개) ──
+    total_pm_notes = sum(len(inst.notes) for inst in pm.instruments)
+    has_music21_notes = any(
+        isinstance(el, (music21.note.Note, music21.chord.Chord))
+        for el in score.flat.notesAndRests
+    )
+    if total_pm_notes == 0 and not has_music21_notes:
+        raise ValueError(
+            f"MIDI 파일에 음표가 없습니다: {midi_path}. "
+            "빈 MIDI 파일은 변조할 수 없습니다."
+        )
 
     # 원본 키 감지 (music21 Key 객체 → 정규화된 이름)
     original_key_obj = score.analyze("key")
@@ -126,12 +155,18 @@ def transpose_midi(midi_path: str, target_key: str) -> dict:
     transposed.write("midi", fp=out_path)
     print(f"변조 완료 ({original_key_name} → {target_key}): {out_path}")
 
+    # 조표 기준 플랫 표기 여부 판단 (midi_to_note_list와 동일 로직)
+    transposed_key = transposed.analyze("key")
+    use_flats = False
+    if transposed_key and hasattr(transposed_key, "sharps") and transposed_key.sharps is not None:
+        use_flats = transposed_key.sharps < 0
+
     # 음표 리스트도 함께 반환
     notes = []
     for element in transposed.flat.notesAndRests:
         if isinstance(element, music21.note.Note):
             notes.append({
-                "pitch": element.nameWithOctave,
+                "pitch": _to_flat_name(element.nameWithOctave, use_flats),
                 "duration": _resolve_duration(element),
                 "start_time": float(element.offset),
             })
