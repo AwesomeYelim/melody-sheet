@@ -494,7 +494,7 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
         midi_path = os.path.join(OUTPUT_DIR, f"{base_name}.mid")
         midi_obj.write(midi_path)
-        return midi_path
+        return midi_path, 0.0
 
     # ── 3. 옥타브 중복 제거 ──────────────────────────────────
     before = len(raw_notes)
