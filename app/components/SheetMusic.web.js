@@ -114,6 +114,7 @@ function buildMeasures(notes) {
   const measures = [];
   let cur = [];
   let units = 0;
+  let realNoteIdx = 0; // 실제 음표만 카운팅하는 인덱스 (패딩 rest 미포함)
 
   for (const note of notes) {
     const vd = toEasyDur(note.duration);
@@ -125,7 +126,8 @@ function buildMeasures(notes) {
       units = 0;
     }
 
-    cur.push({ ...note, _vd: vd, _u: u, _lyric: note._lyric || "" });
+    cur.push({ ...note, _vd: vd, _u: u, _lyric: note._lyric || "", _originalIdx: realNoteIdx });
+    realNoteIdx++;
     units += u;
 
     if (units >= MEASURE_UNITS) {
@@ -147,7 +149,7 @@ function finalizeMeasureObj(notes, usedUnits) {
   ];
   for (const { u, dur } of restOrder) {
     while (remaining >= u) {
-      result.push({ pitch: "rest", _vd: dur, _u: u });
+      result.push({ pitch: "rest", _vd: dur, _u: u, _originalIdx: -1 });
       remaining -= u;
     }
   }
@@ -156,9 +158,10 @@ function finalizeMeasureObj(notes, usedUnits) {
     return `${toEasyPitch(n.pitch)}/${n._vd}`;
   }).join(", ");
   // Track which tickable indices are real notes (not padding rests)
-  const tickableMap = result.map((n, i) => (n.pitch !== "rest" ? i : -1)).filter((i) => i >= 0);
-  // Lyrics for each tickable (indexed by position in result)
-  const lyricMap = result.map((n) => (n.pitch !== "rest" ? (n._lyric || "") : ""));
+  const tickableMap = result.map((n, i) => (n._originalIdx >= 0 ? i : -1)).filter((i) => i >= 0);
+  // lyricMap: 각 tickable 위치에 대응하는 가사. 패딩 rest는 항상 빈 문자열.
+  // _originalIdx를 통해 실제 음표만 가사를 가지도록 보장.
+  const lyricMap = result.map((n) => (n._originalIdx >= 0 ? (n._lyric || "") : ""));
   return {
     noteStr,
     startTime: notes[0].start_time ?? 0,
@@ -289,10 +292,10 @@ export default function SheetMusic({ notes, chords = [], lyrics = [], title = ""
 
   // API가 music21의 notesAndRests를 반환하므로 rest 제거
   // (buildMeasures가 자체적으로 패딩 rest를 생성함)
+  // lyrics 배열은 notes 배열과 동일한 인덱스(rest 포함)이므로 원본 인덱스(i)로 참조
   const pitchedNotes = React.useMemo(() => {
     const allNotes = notes || [];
     const lyr = lyrics || [];
-    let lyricIdx = 0;
     return allNotes
       .map((n, i) => {
         if (n.pitch && n.pitch !== "rest") {
