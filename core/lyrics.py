@@ -1,78 +1,93 @@
 """
-Whisper 기반 가사 추출 + 음표 타임스탬프 매핑 (음절 단위)
+WhisperX 기반 가사 추출 + 음표 타임스탬프 매핑 (음절 단위)
 """
 import os
 import torch
-import whisper
+import whisperx
 import numpy as np
 import librosa
 import pretty_midi
 from core.audio_to_midi import _ensure_wav
 
 _model = None
+_align_model = None
+_align_metadata = None
 
 
 def _get_model():
+    """WhisperX 모델 싱글턴 로딩."""
     global _model
     if _model is None:
-        # MPS는 word_timestamps의 float64 미지원 → CPU 사용
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"[Lyrics] Whisper 모델 로딩 (medium, {device})...")
-        _model = whisper.load_model("medium", device=device)
+        compute_type = "float16" if device == "cuda" else "float32"
+        print(f"[Lyrics] WhisperX 모델 로딩 (medium, {device})...")
+        _model = whisperx.load_model("medium", device, compute_type=compute_type)
         print("[Lyrics] 모델 로딩 완료")
     return _model
+
+
+def _get_align_model(device: str) -> tuple:
+    """한국어 강제정렬 모델 싱글턴 로딩."""
+    global _align_model, _align_metadata
+    if _align_model is None:
+        print("[Lyrics] 한국어 정렬 모델 로딩...")
+        _align_model, _align_metadata = whisperx.load_align_model(
+            language_code="ko", device=device
+        )
+        print("[Lyrics] 정렬 모델 로딩 완료")
+    return _align_model, _align_metadata
 
 
 def transcribe_lyrics(audio_path: str) -> list:
     """
     오디오에서 가사를 음절 단위로 추출.
-    Whisper 단어 → 한국어 글자(음절)로 분할하여 각각 시간 균등 배분.
+    WhisperX 강제정렬로 단어 단위 정밀 타임스탬프 → 한국어 글자 분할.
     반환: [{"char": "하", "start": 0.0, "end": 0.25}, ...]
     """
     wav_path = _ensure_wav(audio_path)
     is_temp = wav_path != audio_path
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     try:
         model = _get_model()
-        audio, _ = librosa.load(wav_path, sr=16000, mono=True)
-        audio = audio.astype(np.float32)
-        # MPS/CPU에서는 fp16 미지원
-        use_fp16 = model.device.type == "cuda"
-        result = model.transcribe(
-            audio,
-            language="ko",
-            word_timestamps=True,
-            fp16=use_fp16,
-        )
+        audio = whisperx.load_audio(wav_path)
+        result = model.transcribe(audio, batch_size=16, language="ko")
+
+        # 강제정렬로 단어 단위 정밀 타임스탬프
+        try:
+            align_model, metadata = _get_align_model(device)
+            result = whisperx.align(
+                result["segments"], align_model, metadata,
+                audio, device, return_char_alignments=False,
+            )
+        except Exception as e:
+            print(f"[Lyrics] 강제정렬 실패, 기본 타임스탬프 사용: {e}")
     finally:
         if is_temp:
             os.unlink(wav_path)
 
-    # 단어 → 음절(글자) 분할
+    # 단어 → 글자(음절) 분할
     syllables = []
     for seg in result.get("segments", []):
-        for w in seg.get("words", []):
-            text = w["word"].strip()
-            if not text:
+        for word_info in seg.get("words", []):
+            word = word_info.get("word", "").strip()
+            w_start = word_info.get("start")
+            w_end = word_info.get("end")
+            if not word or w_start is None or w_end is None:
                 continue
-            chars = list(text)
-            n_chars = len(chars)
-            w_start = w["start"]
-            w_end = w["end"]
-            dur_per_char = (w_end - w_start) / n_chars if n_chars > 0 else 0
 
-            for j, ch in enumerate(chars):
+            chars = list(word)
+            if not chars:
+                continue
+            dur = (w_end - w_start) / len(chars)
+            for ci, ch in enumerate(chars):
                 syllables.append({
                     "char": ch,
-                    "start": w_start + j * dur_per_char,
-                    "end": w_start + (j + 1) * dur_per_char,
+                    "start": round(w_start + ci * dur, 4),
+                    "end": round(w_start + (ci + 1) * dur, 4),
                 })
 
-    print(f"[Lyrics] 추출된 음절: {len(syllables)}개")
-    if syllables:
-        preview = "".join(s["char"] for s in syllables[:20])
-        print(f"[Lyrics] 미리보기: {preview}")
-
+    print(f"[Lyrics] WhisperX 추출 완료: {len(syllables)}개 음절")
     return syllables
 
 

@@ -8,7 +8,7 @@
   - 12단계 파이프라인: WAV변환 → CREPE피치 → 옥타브필터 → 동일음병합 → 짧은음흡수 → 조성감지 → 조성보정 → 재병합 → 템포양자화 → 겹침해소 → 음역대정제 → MIDI생성
 - `core/midi_to_sheet.py` — MIDI→JSON 음표 변환 (music21 기반, 120줄)
 - `core/chord_detector.py` — Krumhansl-Schmuckler 키 감지 + 반마디 단위 다이아토닉 코드 배정 (254줄)
-- `core/lyrics.py` — Whisper 한국어 가사 추출 + 음표 정렬 (~157줄)
+- `core/lyrics.py` — WhisperX 한국어 가사 추출 + 강제정렬 + 음표 매핑 (~172줄)
 - `core/transposer.py` — 키 변환 + 손상 MIDI 에러핸들링 (187줄)
 - `test.py` — 테스트용 WAV 생성 + API 호출 테스트
 
