@@ -7,13 +7,13 @@ import * as DocumentPicker from "expo-document-picker";
 import { Audio } from "expo-av";
 import { API_URL } from "../config";
 import SheetMusic from "../components/SheetMusic";
+import { COLORS, SPACING, RADIUS, TYPO, SHADOW } from "../theme";
 
 // ── 피치 감지 헬퍼 ──────────────────────────────────────
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const MIN_MIDI = 48; // C3
 const MAX_MIDI = 84; // C6
 const PITCH_RANGE = MAX_MIDI - MIN_MIDI;
-const MAX_HISTORY = 80;
 
 function autoCorrelate(buf, sampleRate) {
   let SIZE = buf.length;
@@ -93,9 +93,9 @@ export default function AudioToSheetScreen() {
   const timerRef = useRef(null);
 
   // 피치 감지 상태
-  const [currentPitch, setCurrentPitch] = useState(0); // 0~1 정규화된 피치
+  const [currentPitch, setCurrentPitch] = useState(0);
   const [currentNote, setCurrentNote] = useState(null);
-  const [waveData, setWaveData] = useState([]); // 파형 데이터
+  const [waveData, setWaveData] = useState([]);
   const audioCtxRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const pitchLoopRef = useRef(null);
@@ -132,24 +132,21 @@ export default function AudioToSheetScreen() {
       setCurrentNote(null);
       setWaveData([]);
 
-      // 파형 + 주파수 데이터 버퍼
       const timeBuf = new Uint8Array(analyser.frequencyBinCount);
 
       function loop(time) {
         pitchLoopRef.current = requestAnimationFrame(loop);
-        if (time - lastTime < 50) return; // ~20fps
+        if (time - lastTime < 50) return;
         lastTime = time;
 
-        // 파형 데이터 (출렁거리는 시각화용)
         analyser.getByteTimeDomainData(timeBuf);
         const step = Math.floor(timeBuf.length / 40);
         const wave = [];
         for (let i = 0; i < 40; i++) {
-          wave.push((timeBuf[i * step] - 128) / 128); // -1 ~ 1
+          wave.push((timeBuf[i * step] - 128) / 128);
         }
         setWaveData(wave);
 
-        // 피치 감지
         analyser.getFloatTimeDomainData(buf);
         const freq = autoCorrelate(buf, ctx.sampleRate);
 
@@ -159,7 +156,7 @@ export default function AudioToSheetScreen() {
           setCurrentNote(midiToNoteName(midi));
           setCurrentPitch(normed);
         } else {
-          setCurrentPitch((prev) => prev * 0.85); // 부드럽게 감소
+          setCurrentPitch((prev) => prev * 0.85);
         }
       }
       pitchLoopRef.current = requestAnimationFrame(loop);
@@ -260,7 +257,6 @@ export default function AudioToSheetScreen() {
       setFileName(name);
 
       if (Platform.OS === "web") {
-        // 웹: blob URI → File 객체로 변환
         const resp = await fetch(uri);
         const blob = await resp.blob();
         const file = new File([blob], name, { type: "audio/mp4" });
@@ -316,7 +312,6 @@ export default function AudioToSheetScreen() {
     }
   }
 
-  // ── 타이머 포맷 ────────────────────────────────────────
   function formatTime(sec) {
     const m = String(Math.floor(sec / 60)).padStart(2, "0");
     const s = String(sec % 60).padStart(2, "0");
@@ -325,65 +320,84 @@ export default function AudioToSheetScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>멜로디 → 악보</Text>
-      <Text style={styles.subtitle}>마이크로 녹음하거나 파일을 선택하세요</Text>
+      {/* 인트로 섹션 */}
+      <Text style={styles.subtitle}>노래를 녹음하거나 파일을 올려보세요</Text>
 
-      {/* 노래 제목 입력 */}
-      <TextInput
-        style={styles.titleInput}
-        placeholder="노래 제목 입력 (선택)"
-        placeholderTextColor="#aaa"
-        value={songTitle}
-        onChangeText={setSongTitle}
-      />
+      {/* 노래 제목 */}
+      <View style={styles.inputCard}>
+        <Text style={styles.inputLabel}>노래 제목</Text>
+        <TextInput
+          style={styles.titleInput}
+          placeholder="선택 사항"
+          placeholderTextColor={COLORS.textTertiary}
+          value={songTitle}
+          onChangeText={setSongTitle}
+        />
+      </View>
 
-      {/* 녹음 버튼 */}
-      {!isRecording ? (
-        <TouchableOpacity
-          style={[styles.button, styles.recordButton]}
-          onPress={handleStartRecording}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>🎙 녹음 시작</Text>
-        </TouchableOpacity>
-      ) : (
-        <TouchableOpacity
-          style={[styles.button, styles.stopButton]}
-          onPress={handleStopRecording}
-        >
-          <View style={styles.recordingRow}>
-            <View style={styles.recordingDot} />
-            <Text style={styles.buttonText}>
-              녹음 중... {formatTime(recordSeconds)}
+      {/* 액션 카드 */}
+      <View style={styles.actionsCard}>
+        {!isRecording ? (
+          <>
+            <TouchableOpacity
+              style={styles.recordBtn}
+              onPress={handleStartRecording}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <View style={styles.recordBtnInner}>
+                <Text style={styles.recordBtnIcon}>{"\u23FA"}</Text>
+              </View>
+              <Text style={styles.recordBtnLabel}>녹음 시작</Text>
+            </TouchableOpacity>
+
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>또는</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <TouchableOpacity
+              style={styles.fileBtn}
+              onPress={handlePickFile}
+              disabled={loading}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.fileBtnIcon}>{"\u{1F4C2}"}</Text>
+              <Text style={styles.fileBtnText}>파일에서 불러오기</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.stopBtn}
+            onPress={handleStopRecording}
+            activeOpacity={0.8}
+          >
+            <View style={styles.stopBtnDot} />
+            <Text style={styles.stopBtnText}>
+              녹음 중  {formatTime(recordSeconds)}
             </Text>
-          </View>
-        </TouchableOpacity>
-      )}
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* 실시간 피치 시각화 (녹음 중) */}
       {isRecording && (
-        <View style={styles.pitchContainer}>
-          {/* 현재 음이름 */}
-          <Text style={styles.pitchCurrentNote}>
-            {currentNote || "--"}
-          </Text>
-
-          {/* 출렁거리는 웨이브 */}
+        <View style={styles.pitchCard}>
+          <Text style={styles.pitchNote}>{currentNote || "--"}</Text>
           <View style={styles.waveArea}>
-            {/* 피치 높이 인디케이터 (원) */}
             <View
               style={[
                 styles.pitchBall,
                 { bottom: `${currentPitch * 80 + 5}%` },
-                { backgroundColor: `hsl(${200 - currentPitch * 200}, 75%, 55%)` },
+                { backgroundColor: `hsl(${220 - currentPitch * 160}, 80%, 60%)` },
               ]}
             />
-            {/* 파형 바 */}
             <View style={styles.waveBars}>
               {waveData.map((v, i) => {
                 const amp = Math.abs(v) * (0.5 + currentPitch * 0.5);
                 const heightPx = Math.max(2, amp * 100);
-                const hue = 200 - currentPitch * 200;
+                const hue = 220 - currentPitch * 160;
                 const dist = Math.abs(i - 20) / 20;
                 const opacity = 1 - dist * 0.5;
                 return (
@@ -401,43 +415,31 @@ export default function AudioToSheetScreen() {
               })}
             </View>
           </View>
-
-          {/* 스케일 라벨 */}
           <View style={styles.scaleRow}>
-            <Text style={styles.scaleLabel}>낮음</Text>
+            <Text style={styles.scaleLabel}>Low</Text>
             <View style={styles.scaleLine} />
-            <Text style={styles.scaleLabel}>높음</Text>
+            <Text style={styles.scaleLabel}>High</Text>
           </View>
         </View>
       )}
 
-      {/* 파일 선택 버튼 */}
-      {!isRecording && (
-        <TouchableOpacity
-          style={[styles.button, styles.fileButton]}
-          onPress={handlePickFile}
-          disabled={loading}
-        >
-          <Text style={[styles.buttonText, styles.fileButtonText]}>
-            🎵 파일에서 불러오기
-          </Text>
-        </TouchableOpacity>
-      )}
-
       {fileName && !isRecording && (
-        <Text style={styles.fileLabel}>파일: {fileName}</Text>
+        <View style={styles.fileTag}>
+          <Text style={styles.fileTagText}>{fileName}</Text>
+        </View>
       )}
 
       {/* Key 선택 */}
       {!isRecording && (
-        <View style={styles.keyRow}>
+        <View style={styles.keySection}>
           <Text style={styles.keyLabel}>Key</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.keyScroll}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {KEY_OPTIONS.map((k) => (
               <TouchableOpacity
                 key={k}
                 style={[styles.keyChip, selectedKey === k && styles.keyChipActive]}
                 onPress={() => setSelectedKey(k)}
+                activeOpacity={0.7}
               >
                 <Text style={[styles.keyChipText, selectedKey === k && styles.keyChipTextActive]}>
                   {k === "auto" ? "자동" : k}
@@ -449,26 +451,44 @@ export default function AudioToSheetScreen() {
       )}
 
       {detectedKey && selectedKey === "auto" && (
-        <Text style={styles.detectedKeyLabel}>감지된 키: {detectedKey}</Text>
-      )}
-
-      {errorMsg && (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>오류: {errorMsg}</Text>
+        <View style={styles.detectedKeyTag}>
+          <Text style={styles.detectedKeyText}>감지된 키: {detectedKey}</Text>
         </View>
       )}
 
+      {/* 에러 */}
+      {errorMsg && (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorText}>{errorMsg}</Text>
+        </View>
+      )}
+
+      {/* 로딩 */}
       {loading && (
         <View style={styles.loadingBox}>
-          <ActivityIndicator size="large" color="#4F8EF7" />
+          <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={styles.loadingText}>분석 중... (최대 1분 소요)</Text>
         </View>
       )}
 
+      {/* 결과 */}
       {notes.length > 0 && (
-        <View style={styles.resultBox}>
-          <Text style={styles.resultTitle}>추출된 음표 ({notes.length}개)</Text>
-          <SheetMusic notes={notes} chords={chords} lyrics={lyrics} title={songTitle} filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")} midiFile={midiFile} bpm={bpm} />
+        <View style={styles.resultCard}>
+          <View style={styles.resultHeader}>
+            <Text style={styles.resultTitle}>악보</Text>
+            <View style={styles.resultBadge}>
+              <Text style={styles.resultBadgeText}>{notes.length}개 음표</Text>
+            </View>
+          </View>
+          <SheetMusic
+            notes={notes}
+            chords={chords}
+            lyrics={lyrics}
+            title={songTitle}
+            filename={songTitle || (fileName ? fileName.replace(/\.[^.]+$/, "") : "sheet_music")}
+            midiFile={midiFile}
+            bpm={bpm}
+          />
         </View>
       )}
     </ScrollView>
@@ -478,94 +498,157 @@ export default function AudioToSheetScreen() {
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
-    padding: 24,
-    backgroundColor: "#f8f9ff",
-  },
-  title: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "#1a1a2e",
-    marginBottom: 8,
+    padding: SPACING.xxl,
+    paddingBottom: SPACING.xxxl,
+    backgroundColor: COLORS.bg,
   },
   subtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 32,
-    lineHeight: 22,
+    ...TYPO.body,
+    color: COLORS.textSecondary,
+    marginBottom: SPACING.xl,
   },
-  button: {
-    borderRadius: 12,
-    paddingVertical: 16,
+
+  // 입력 카드
+  inputCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
+    ...SHADOW.sm,
+  },
+  inputLabel: {
+    ...TYPO.caption,
+    color: COLORS.textTertiary,
+    marginBottom: SPACING.sm,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  titleInput: {
+    ...TYPO.body,
+    color: COLORS.textPrimary,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+
+  // 액션 카드
+  actionsCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.xxl,
+    marginBottom: SPACING.lg,
     alignItems: "center",
-    marginBottom: 12,
+    ...SHADOW.sm,
   },
-  recordButton: {
-    backgroundColor: "#E94F4F",
+  recordBtn: {
+    alignItems: "center",
+    marginBottom: SPACING.xl,
   },
-  stopButton: {
-    backgroundColor: "#E94F4F",
-    opacity: 0.85,
+  recordBtnInner: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: COLORS.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: SPACING.md,
+    ...SHADOW.md,
   },
-  fileButton: {
-    backgroundColor: "#fff",
-    borderWidth: 1.5,
-    borderColor: "#4F8EF7",
+  recordBtnIcon: {
+    fontSize: 28,
+    color: COLORS.textInverse,
   },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+  recordBtnLabel: {
+    ...TYPO.bodyBold,
+    color: COLORS.textPrimary,
   },
-  fileButtonText: {
-    color: "#4F8EF7",
-  },
-  recordingRow: {
+  dividerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    width: "100%",
+    marginBottom: SPACING.xl,
   },
-  recordingDot: {
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  dividerText: {
+    ...TYPO.caption,
+    color: COLORS.textTertiary,
+    marginHorizontal: SPACING.lg,
+  },
+  fileBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    borderStyle: "dashed",
+    gap: SPACING.sm,
+  },
+  fileBtnIcon: {
+    fontSize: 18,
+  },
+  fileBtnText: {
+    ...TYPO.bodyBold,
+    color: COLORS.textSecondary,
+  },
+
+  // 녹음 중지 버튼
+  stopBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    paddingVertical: SPACING.lg,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.danger,
+    gap: SPACING.md,
+  },
+  stopBtnDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#fff",
-    opacity: 0.9,
+    backgroundColor: COLORS.textInverse,
   },
-  fileLabel: {
-    marginTop: 4,
-    marginBottom: 8,
-    fontSize: 13,
-    color: "#555",
+  stopBtnText: {
+    ...TYPO.bodyBold,
+    color: COLORS.textInverse,
   },
-  // ── 피치 시각화 스타일 ──────────────────────────
-  pitchContainer: {
-    backgroundColor: "#1a1a2e",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+
+  // 피치 시각화
+  pitchCard: {
+    backgroundColor: COLORS.pitchBg,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
     alignItems: "center",
   },
-  pitchCurrentNote: {
-    color: "#4FD1C5",
+  pitchNote: {
+    color: COLORS.pitchAccent,
     fontSize: 28,
-    fontWeight: "bold",
-    marginBottom: 8,
+    fontWeight: "700",
+    marginBottom: SPACING.sm,
   },
   waveArea: {
     width: "100%",
-    height: 160,
+    height: 140,
     justifyContent: "center",
     alignItems: "center",
     overflow: "hidden",
   },
   pitchBall: {
     position: "absolute",
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     left: "50%",
-    marginLeft: -12,
-    shadowColor: "#4FD1C5",
+    marginLeft: -10,
+    shadowColor: COLORS.pitchAccent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 12,
@@ -579,100 +662,140 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   waveBar: {
-    width: 5,
-    borderRadius: 3,
+    width: 4,
+    borderRadius: 2,
     minHeight: 2,
   },
   scaleRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 8,
+    marginTop: SPACING.sm,
     width: "100%",
   },
   scaleLabel: {
-    color: "#555",
-    fontSize: 10,
+    ...TYPO.small,
+    color: COLORS.textTertiary,
   },
   scaleLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#333",
-    marginHorizontal: 8,
+    backgroundColor: "#1E293B",
+    marginHorizontal: SPACING.sm,
   },
-  // ── 기존 스타일 ──────────────────────────────────
-  keyRow: {
+
+  // 파일 태그
+  fileTag: {
+    backgroundColor: COLORS.primaryBg,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    alignSelf: "flex-start",
+    marginBottom: SPACING.md,
+  },
+  fileTagText: {
+    ...TYPO.caption,
+    color: COLORS.primary,
+  },
+
+  // Key 선택
+  keySection: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
-    marginTop: 4,
+    marginBottom: SPACING.md,
   },
   keyLabel: {
-    fontSize: 13,
-    fontWeight: "bold",
-    color: "#555",
-    marginRight: 8,
-    minWidth: 28,
+    ...TYPO.bodyBold,
+    color: COLORS.textSecondary,
+    marginRight: SPACING.md,
+    minWidth: 32,
   },
-  keyScroll: { flexGrow: 1 },
   keyChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    marginRight: 6,
-    backgroundColor: "#fff",
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    marginRight: SPACING.sm,
+    backgroundColor: COLORS.surface,
   },
   keyChipActive: {
-    backgroundColor: "#4F8EF7",
-    borderColor: "#4F8EF7",
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
-  keyChipText: { fontSize: 12, color: "#555" },
-  keyChipTextActive: { color: "#fff", fontWeight: "bold" },
-  detectedKeyLabel: {
-    fontSize: 12,
-    color: "#4F8EF7",
-    marginBottom: 6,
+  keyChipText: {
+    ...TYPO.caption,
+    color: COLORS.textSecondary,
   },
-  errorBox: {
-    marginTop: 16,
-    backgroundColor: "#fff0f0",
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#ffcccc",
+  keyChipTextActive: {
+    color: COLORS.textInverse,
+    fontWeight: "600",
+  },
+  detectedKeyTag: {
+    backgroundColor: COLORS.primaryBg,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    alignSelf: "flex-start",
+    marginBottom: SPACING.md,
+  },
+  detectedKeyText: {
+    ...TYPO.caption,
+    color: COLORS.primary,
+    fontWeight: "600",
+  },
+
+  // 에러
+  errorCard: {
+    backgroundColor: COLORS.dangerBg,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    marginTop: SPACING.lg,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.danger,
   },
   errorText: {
-    color: "#cc0000",
-    fontSize: 13,
+    ...TYPO.body,
+    color: COLORS.danger,
   },
-  titleInput: {
-    borderWidth: 1.5,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: "#1a1a2e",
-    backgroundColor: "#fff",
-    marginBottom: 20,
-  },
+
+  // 로딩
   loadingBox: {
-    marginTop: 40,
+    marginTop: SPACING.xxxl,
     alignItems: "center",
-    gap: 12,
+    gap: SPACING.md,
   },
   loadingText: {
-    color: "#888",
-    fontSize: 14,
+    ...TYPO.caption,
+    color: COLORS.textTertiary,
   },
-  resultBox: {
-    marginTop: 32,
+
+  // 결과
+  resultCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.xl,
+    marginTop: SPACING.xxl,
+    ...SHADOW.sm,
+  },
+  resultHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: SPACING.lg,
   },
   resultTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#1a1a2e",
-    marginBottom: 8,
+    ...TYPO.h2,
+    color: COLORS.textPrimary,
+  },
+  resultBadge: {
+    backgroundColor: COLORS.primaryBg,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+  },
+  resultBadgeText: {
+    ...TYPO.small,
+    color: COLORS.primary,
+    fontWeight: "600",
   },
 });

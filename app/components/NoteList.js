@@ -1,13 +1,18 @@
 import React from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { COLORS, SPACING, RADIUS, TYPO, SHADOW } from "../theme";
 
 // 음표 하나를 카드로 표시
 function NoteCard({ note }) {
   const isRest = note.pitch === "rest";
   return (
     <View style={[styles.card, isRest && styles.restCard]}>
-      <Text style={styles.pitch}>{isRest ? "쉼표" : note.pitch}</Text>
-      <Text style={styles.duration}>{note.duration}</Text>
+      <Text style={[styles.pitch, isRest && styles.restPitch]}>
+        {isRest ? "쉼표" : note.pitch}
+      </Text>
+      <Text style={[styles.duration, isRest && styles.restDuration]}>
+        {note.duration}
+      </Text>
     </View>
   );
 }
@@ -17,7 +22,7 @@ export default function NoteList({ notes }) {
   if (!notes || notes.length === 0) return null;
 
   return (
-    <ScrollView horizontal style={styles.container}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.container}>
       {notes.map((note, index) => (
         <NoteCard key={index} note={note} />
       ))}
@@ -27,27 +32,35 @@ export default function NoteList({ notes }) {
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 16,
+    marginTop: SPACING.lg,
   },
   card: {
-    backgroundColor: "#4F8EF7",
-    borderRadius: 8,
-    padding: 10,
-    marginHorizontal: 4,
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    marginRight: SPACING.sm,
     alignItems: "center",
-    minWidth: 60,
+    minWidth: 56,
   },
   restCard: {
-    backgroundColor: "#aaa",
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   pitch: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+    ...TYPO.bodyBold,
+    color: COLORS.textInverse,
+  },
+  restPitch: {
+    color: COLORS.textTertiary,
   },
   duration: {
-    color: "#dce8ff",
-    fontSize: 11,
-    marginTop: 4,
+    ...TYPO.small,
+    color: "rgba(255,255,255,0.7)",
+    marginTop: SPACING.xs,
+  },
+  restDuration: {
+    color: COLORS.textTertiary,
   },
 });

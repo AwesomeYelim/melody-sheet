@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Text, TouchableOpacity, StyleSheet, View } from "react-native";
 import VexFlowModule from "vexflow/bravura";
 import { API_URL } from "../config";
+import { COLORS, SPACING, RADIUS, TYPO, SHADOW } from "../theme";
 
 // ── 상수 ──────────────────────────────────────────────────
 const STAVE_HEIGHT = 160;
@@ -583,75 +584,78 @@ export default function SheetMusic({ notes, chords = [], lyrics = [], title = ""
 
 const styles = StyleSheet.create({
   wrapper: {
-    marginTop: 24,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
   },
   // ── 제어 패널 ──────────────────────────────────
   controlPanel: {
-    marginBottom: 12,
+    marginBottom: SPACING.md,
   },
   toggleRow: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 10,
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
   },
   toggleBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
     borderWidth: 1.5,
-    borderColor: "#ddd",
-    backgroundColor: "#f5f5f5",
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surfaceAlt,
   },
   toggleBtnActive: {
-    backgroundColor: "#4F8EF7",
-    borderColor: "#4F8EF7",
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
   },
   toggleText: {
-    fontSize: 13,
+    ...TYPO.caption,
     fontWeight: "600",
-    color: "#666",
+    color: COLORS.textTertiary,
   },
   toggleTextActive: {
-    color: "#fff",
+    color: COLORS.textInverse,
   },
   actionRow: {
     flexDirection: "row",
-    gap: 8,
+    gap: SPACING.sm,
     alignItems: "center",
   },
   actionBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    minWidth: 60,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.sm,
+    minWidth: 56,
     alignItems: "center",
   },
   actionBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "bold",
+    ...TYPO.caption,
+    color: COLORS.textInverse,
+    fontWeight: "700",
   },
   playBtn: {
-    backgroundColor: "#34C759",
+    backgroundColor: COLORS.success,
   },
   stopBtn: {
-    backgroundColor: "#E94F4F",
+    backgroundColor: COLORS.danger,
   },
   downloadPngBtn: {
-    backgroundColor: "#4F8EF7",
+    backgroundColor: COLORS.primary,
   },
   downloadMidiBtn: {
-    backgroundColor: "#8B5CF6",
+    backgroundColor: COLORS.secondary,
   },
   // ── 기타 ──────────────────────────────────────
-  errorText: { color: "red", fontSize: 12, marginBottom: 4 },
+  errorText: {
+    ...TYPO.caption,
+    color: COLORS.danger,
+    marginBottom: SPACING.xs,
+  },
   sheetTitle: {
-    fontSize: 16, fontWeight: "bold", color: "#1a1a2e",
-    textAlign: "center", marginBottom: 6,
+    ...TYPO.h3,
+    color: COLORS.textPrimary,
+    textAlign: "center",
+    marginBottom: SPACING.sm,
   },
 });
