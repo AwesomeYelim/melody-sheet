@@ -2,8 +2,7 @@ import os
 import subprocess
 import tempfile
 import numpy as np
-import torch
-import torchcrepe
+from basic_pitch.inference import predict
 import librosa
 import pretty_midi
 import imageio_ffmpeg
@@ -70,237 +69,31 @@ def duration_to_grid(duration_sec, bpm):
     return steps * grid
 
 
-# ── CREPE + pYIN 하이브리드 피치 추출 ──────────────────
-CREPE_HOP    = 160      # ~10ms at 16kHz
-CREPE_SR     = 16000
-PYIN_HOP     = 512      # ~23ms at 22050Hz
-PERIOD_MIN   = 0.3      # CREPE periodicity 최소값
-HYSTERESIS   = 1.2      # 음표 경계 히스테리시스 (반음 단위) — 비브라토 내성 확보
+# ── Basic Pitch 피치 추출 ──────────────────────────────
+PYIN_HOP     = 512      # ~23ms at 22050Hz (fill_gaps_with_whisper에서 사용)
 
 
-def _run_crepe(wav_path: str):
-    """
-    하이브리드: CREPE 피치 우선, unvoiced 구간은 pYIN 피치로 보완.
-    pYIN voicing으로 구간을 넓히되, 피치값은 CREPE가 있으면 CREPE 사용.
-    """
-    audio_22k, _ = librosa.load(wav_path, sr=22050, mono=True)
-
-    # ── 전처리: 노이즈 제거 + 음량 정규화 ────────────────
-    audio_22k = nr.reduce_noise(y=audio_22k, sr=22050, prop_decrease=0.7)
-    peak = np.max(np.abs(audio_22k))
-    if peak > 0:
-        audio_22k = audio_22k / peak * 0.95
-    print(f"[AMT] 전처리 완료: 노이즈 제거 + 정규화 (peak: {peak:.4f})")
-
-    # ── CREPE ─────────────────────────────────────────────
-    audio_16k = librosa.resample(audio_22k, orig_sr=22050, target_sr=CREPE_SR)
-    audio_t = torch.from_numpy(audio_16k).unsqueeze(0).float()
-
-    if torch.cuda.is_available():
-        device = 'cuda'
-    elif torch.backends.mps.is_available():
-        device = 'mps'
-    else:
-        device = 'cpu'
-    print(f"[AMT] CREPE device: {device}")
-    audio_t = audio_t.to(device)
-
-    c_pitch, c_period = torchcrepe.predict(
-        audio_t, CREPE_SR,
-        hop_length=CREPE_HOP,
-        fmin=PITCH_FMIN, fmax=PITCH_FMAX,
-        model='full',
-        decoder=torchcrepe.decode.viterbi,
-        return_periodicity=True,
-        device=device,
-        batch_size=512,
-    )
-    c_pitch = c_pitch.squeeze(0).cpu().numpy()
-    c_period = c_period.squeeze(0).cpu().numpy()
-    c_pitch = torchcrepe.filter.median(
-        torch.from_numpy(c_pitch).unsqueeze(0), 5
-    ).squeeze(0).numpy()
-
-    c_hop_sec = CREPE_HOP / CREPE_SR
-    c_times = np.arange(len(c_pitch)) * c_hop_sec
-
-    # ── pYIN (보조) ───────────────────────────────────────
-    p_f0, p_voiced, p_probs = librosa.pyin(
-        audio_22k, fmin=PITCH_FMIN, fmax=PITCH_FMAX, sr=22050
-    )
-    p_times = librosa.frames_to_time(
-        np.arange(len(p_f0)), sr=22050, hop_length=PYIN_HOP
-    )
-
-    # ── 통합 ──────────────────────────────────────────────
-    midi_f0 = np.full_like(c_pitch, np.nan)
-    confidence = np.zeros_like(c_pitch)
-
-    # 1) CREPE confident 프레임 → CREPE 피치
-    crepe_good = c_period >= PERIOD_MIN
-    midi_f0[crepe_good] = librosa.hz_to_midi(c_pitch[crepe_good])
-    confidence[crepe_good] = c_period[crepe_good]
-
-    # 2) CREPE unvoiced → pYIN으로 피치 보완
-    #    pYIN voiced & prob >= 0.15 → pYIN 피치 사용 (낮은 임계값으로 커버리지 확대)
-    crepe_bad = ~crepe_good
-    p_valid = p_voiced & (p_probs >= 0.15) & ~np.isnan(p_f0)
-
-    if np.any(crepe_bad) and np.any(p_valid):
-        p_midi_all = librosa.hz_to_midi(p_f0)
-        # pYIN 타임라인을 CREPE 해상도로 보간
-        for idx in np.where(crepe_bad)[0]:
-            t = c_times[idx]
-            # 가장 가까운 pYIN 프레임
-            j = np.argmin(np.abs(p_times - t))
-            if p_valid[j] and abs(p_times[j] - t) < 0.1:
-                midi_f0[idx] = p_midi_all[j]
-                confidence[idx] = p_probs[j] * 0.7
-
-    n_crepe = int(np.sum(crepe_good & ~np.isnan(midi_f0)))
-    n_pyin = int(np.sum(crepe_bad & ~np.isnan(midi_f0)))
-    n_total = n_crepe + n_pyin
-    print(f"[AMT] 피치: CREPE {n_crepe} + pYIN {n_pyin} = {n_total}프레임 ({n_total/len(c_pitch)*100:.0f}%)")
-
-    # onset 감지 (같은 피치에서 새 음절 분리용)
-    onsets = librosa.onset.onset_detect(
-        y=audio_22k, sr=22050, units='time',
-        backtrack=True, delta=0.05,
-    )
-    print(f"[AMT] onset 감지: {len(onsets)}개")
-
-    notes = _segment_notes(midi_f0, confidence, c_times, onsets)
-    return notes, audio_22k, 22050
-
-
-def _segment_notes(midi_f0, confidence, times, onsets=None):
-    """통합 피치 트랙을 이산 음표로 변환."""
-    reliable = ~np.isnan(midi_f0) & (confidence > 0)
-
-    groups = _find_voiced_groups(reliable, midi_f0, times, confidence)
+def _run_basic_pitch(wav_path: str) -> tuple:
+    """Basic Pitch로 오디오에서 음표 이벤트를 직접 추출."""
+    model_output, midi_data, note_events = predict(wav_path)
+    # note_events: [(start_sec, end_sec, pitch_midi, amplitude, pitch_bends), ...]
 
     notes = []
-    for g_pitches, g_times, g_confs in groups:
-        sub = _group_to_notes(g_pitches, g_times, g_confs, onsets)
-        notes.extend(sub)
-
-    notes.sort(key=lambda x: x["start"])
-    return notes
-
-
-def _find_voiced_groups(reliable, midi_f0, times, confidence):
-    """연속 voiced 프레임을 그룹으로 묶기. 짧은 무성 갭(20프레임 ≈ 200ms)은 연결."""
-    groups = []
-    n = len(reliable)
-    i = 0
-    MAX_GAP = 20
-
-    while i < n:
-        if not reliable[i]:
-            i += 1
+    for start, end, pitch, amp, _ in note_events:
+        midi_note = int(round(pitch))
+        if not (MIDI_MIN <= midi_note <= MIDI_MAX):
             continue
-        start = i
-        while i < n:
-            if reliable[i]:
-                i += 1
-            else:
-                gap = 0
-                j = i
-                while j < n and not reliable[j] and gap < MAX_GAP:
-                    gap += 1
-                    j += 1
-                if j < n and reliable[j] and gap < MAX_GAP:
-                    i = j
-                else:
-                    break
-        end = i
-        if end - start >= 3:  # 최소 ~30ms
-            g_pitches = midi_f0[start:end].copy()
-            g_times = times[start:end]
-            g_confs = confidence[start:end]
-            nan_mask = np.isnan(g_pitches)
-            if np.any(~nan_mask):
-                if np.any(nan_mask):
-                    g_pitches[nan_mask] = np.interp(
-                        np.where(nan_mask)[0], np.where(~nan_mask)[0], g_pitches[~nan_mask]
-                    )
-                groups.append((g_pitches, g_times, g_confs))
-    return groups
+        notes.append({
+            "midi_note": midi_note,
+            "start": float(start),
+            "duration": float(end - start),
+            "velocity": int(np.clip(amp * 70 + 40, 40, 110)),
+        })
 
-
-def _group_to_notes(pitches, times, confs, onsets=None):
-    """히스테리시스 + onset 기반 음표 분할.
-    피치 변화로 분할 후, 긴 음표는 onset으로 추가 분할."""
-    if len(pitches) < 3:
-        return []
-
-    # 5프레임 이동 중앙값으로 비브라토 흡수
-    win = 5
-    smoothed = np.array([
-        np.median(pitches[max(0, i - win//2):i + win//2 + 1])
-        for i in range(len(pitches))
-    ])
-
-    # 1단계: 피치 변화 + onset 동시 분할
-    split_points = [0]
-    current_note = round(smoothed[0])
-
-    # onset 시간을 프레임 인덱스로 변환
-    onset_frames = set()
-    if onsets is not None and len(onsets) > 0:
-        for ot in onsets:
-            # 이 그룹의 시간 범위 내 onset만
-            if times[0] <= ot <= times[-1]:
-                idx = np.argmin(np.abs(times - ot))
-                if idx > 0:  # 첫 프레임은 제외
-                    onset_frames.add(idx)
-
-    for j in range(1, len(smoothed)):
-        # 피치 변화로 분할
-        deviation = abs(smoothed[j] - current_note)
-        if deviation >= HYSTERESIS:
-            split_points.append(j)
-            current_note = round(smoothed[j])
-        # onset으로 분할 (같은 피치여도 새 발성 시작)
-        elif j in onset_frames:
-            # onset 전후 최소 간격 확인 (너무 가까운 분할 방지)
-            if j - split_points[-1] >= 8:  # ~80ms 최소 간격
-                split_points.append(j)
-
-    split_points.append(len(pitches))
-
-    notes = []
-    for i in range(len(split_points) - 1):
-        _emit_note(notes, pitches, times, confs, split_points[i], split_points[i + 1])
-    return notes
-
-
-def _emit_note(notes, pitches, times, confs, seg_start, seg_end):
-    """세그먼트에서 음표 하나 생성 (confidence 가중 피치)"""
-    seg_pitches = pitches[seg_start:seg_end]
-    seg_confs = confs[seg_start:seg_end]
-
-    weights = seg_confs / (seg_confs.sum() + 1e-8)
-    weighted_pitch = np.sum(seg_pitches * weights)
-    midi_note = int(round(weighted_pitch))
-
-    if not (MIDI_MIN <= midi_note <= MIDI_MAX):
-        return
-
-    t_start = float(times[seg_start])
-    t_end = float(times[min(seg_end, len(times) - 1)])
-    dur = t_end - t_start
-
-    if dur < MIN_NOTE_DURATION:
-        return
-
-    conf = float(np.mean(seg_confs))
-    notes.append({
-        "midi_note": midi_note,
-        "start": t_start,
-        "duration": dur,
-        "velocity": int(np.clip(conf * 127, 40, 110)),
-    })
+    # RMS 필터 + 템포 추정용 오디오 데이터
+    audio_22k, _ = librosa.load(wav_path, sr=22050, mono=True)
+    print(f"[AMT] Basic Pitch 음표 추출: {len(notes)}개")
+    return notes, audio_22k, 22050
 
 
 # ── 옥타브 중복 제거 (배음/하모닉스) ─────────────────────
@@ -458,7 +251,7 @@ def _snap_to_key(notes, key_root, key_mode):
 # ── 메인 변환 함수 ─────────────────────────────────────────
 def convert_audio_to_midi(audio_path: str) -> tuple:
     """
-    AMT 파이프라인 (CREPE 기반).
+    AMT 파이프라인 (Basic Pitch 기반).
     반환: (midi_path, start_offset, estimated_bpm)
       — start_offset은 가사 매핑에 필요한 원본 시작 시간(초).
       — estimated_bpm은 librosa로 추정한 BPM (60~180 범위).
@@ -472,10 +265,10 @@ def convert_audio_to_midi(audio_path: str) -> tuple:
     print(f"[AMT] 로드 완료: {audio_duration:.1f}초")
 
     try:
-        # ── 2. CREPE 피치 추출 + 세그멘테이션 ───────────────
-        print("[AMT] CREPE 분석 중...")
-        raw_notes, audio_data, sr_audio = _run_crepe(wav_path)
-        print(f"[AMT] CREPE 완료: {len(raw_notes)}개 음표")
+        # ── 2. Basic Pitch 피치 추출 ─────────────────────────
+        print("[AMT] Basic Pitch 분석 중...")
+        raw_notes, audio_data, sr_audio = _run_basic_pitch(wav_path)
+        print(f"[AMT] Basic Pitch 완료: {len(raw_notes)}개 음표")
 
         # RMS 기반 저음량 구간 필터링
         rms = librosa.feature.rms(y=audio_data, hop_length=512)[0]
