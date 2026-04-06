@@ -8,6 +8,12 @@
 import numpy as np
 import re
 
+try:
+    import autochord
+    _HAS_AUTOCHORD = True
+except ImportError:
+    _HAS_AUTOCHORD = False
+
 # ── Krumhansl-Schmuckler 프로파일 ───────────────────────────
 _KS_MAJOR = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
 _KS_MINOR = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
@@ -92,13 +98,51 @@ def _build_diatonic(root: int, scale: str):
     return chords
 
 
-def detect_chords(audio, sr, notes: list, beats_per_measure: int = 4, forced_key: str = None):
+def _convert_chord_label(label: str) -> str:
+    """autochord 레이블을 프로젝트 형식으로 변환. 'F:maj'→'F', 'D:min'→'Dm'"""
+    parts = label.split(':')
+    root = parts[0]
+    quality = parts[1] if len(parts) > 1 else 'maj'
+    if quality == 'min':
+        return root + 'm'
+    return root
+
+
+def _detect_chords_autochord(audio_path: str) -> list:
+    """autochord Bi-LSTM-CRF 기반 오디오 코드 감지."""
+    raw_chords = autochord.recognize(audio_path)
+    chords = []
+    for start, end, label in raw_chords:
+        if label == 'N':
+            continue
+        chord_name = _convert_chord_label(label)
+        chords.append({
+            "chord": chord_name,
+            "start_time": round(float(start), 3),
+            "end_time": round(float(end), 3),
+        })
+    print(f"[Chord] autochord 감지 완료: {len(chords)}개 코드")
+    return chords
+
+
+def _key_from_notes_str(notes: list, forced_key: str = None) -> str:
+    """음표 리스트에서 조성 문자열 반환."""
+    if forced_key:
+        return forced_key
+    root, mode = _key_from_notes(notes)
+    root_name = _NOTE_NAMES[root]
+    return root_name + 'm' if mode == 'minor' else root_name
+
+
+def _detect_chords_diatonic(audio, sr, notes: list, beats_per_measure: int = 4,
+                            forced_key: str = None):
     """
+    기존 Krumhansl-Schmuckler 다이아토닉 규칙 기반 코드 감지.
     notes 리스트 → 마디별 코드 심볼 목록
     audio/sr 파라미터는 호환성 유지를 위해 받되 사용하지 않음 (음표 기반으로 처리)
 
     Returns:
-        [{"chord": "Am", "start_time": 0.0, "end_time": 2.0}, ...]
+        ([{"chord": "Am", "start_time": 0.0, "end_time": 2.0}, ...], "Am")
     """
     if not notes:
         return [], None
@@ -251,3 +295,34 @@ def detect_chords(audio, sr, notes: list, beats_per_measure: int = 4, forced_key
             prev_name = chord_name
 
     return results, detected_key
+
+
+def detect_chords(audio, sr, notes: list, beats_per_measure: int = 4,
+                  forced_key: str = None, audio_path: str = None):
+    """
+    코드 감지: autochord 우선, 실패 시 다이아토닉 규칙 폴백.
+
+    Args:
+        audio: 오디오 배열 (다이아토닉 폴백용, 현재 미사용)
+        sr: 샘플레이트
+        notes: 음표 리스트
+        beats_per_measure: 박자 (기본 4/4)
+        forced_key: 강제 조성 지정 (예: "Am", "G")
+        audio_path: autochord용 오디오 파일 경로 (None이면 규칙 기반만 사용)
+
+    Returns:
+        ([{"chord": "Am", "start_time": 0.0, "end_time": 2.0}, ...], "Am")
+    """
+    # autochord 딥러닝 감지 우선 시도
+    if _HAS_AUTOCHORD and audio_path is not None:
+        try:
+            chords = _detect_chords_autochord(audio_path)
+            if chords:
+                # 키 감지는 기존 음표 기반 KS 사용
+                key_str = _key_from_notes_str(notes, forced_key)
+                return chords, key_str
+        except Exception as e:
+            print(f"[Chord] autochord 실패, 다이아토닉 폴백: {e}")
+
+    # 기존 Krumhansl-Schmuckler 다이아토닉 폴백
+    return _detect_chords_diatonic(audio, sr, notes, beats_per_measure, forced_key)

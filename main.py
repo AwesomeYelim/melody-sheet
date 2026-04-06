@@ -71,7 +71,7 @@ async def audio_to_sheet(file: UploadFile = File(...), key: str = Form(None)):
     detected_key = None
     try:
         audio, sr = _load_audio(upload_path, target_sr=22050)
-        chords, detected_key = detect_chords(audio, sr, notes, forced_key=key)
+        chords, detected_key = detect_chords(audio, sr, notes, forced_key=key, audio_path=upload_path)
     except Exception:
         chords = []
 

@@ -4,10 +4,10 @@
 
 ### 백엔드 (Python 3.11 / FastAPI)
 - `main.py` — FastAPI 서버 (엔드포인트: `/api/audio-to-sheet`, `/api/transpose`, `/api/download/{filename}`, `/health`)
-- `core/audio_to_midi.py` — CREPE+pYIN 하이브리드 피치 추출 파이프라인 (763줄, 가장 복잡)
-  - 12단계 파이프라인: WAV변환 → CREPE피치 → 옥타브필터 → 동일음병합 → 짧은음흡수 → 조성감지 → 조성보정 → 재병합 → 템포양자화 → 겹침해소 → 음역대정제 → MIDI생성
+- `core/audio_to_midi.py` — Basic Pitch 피치 추출 파이프라인 (571줄, 가장 복잡)
+  - 12단계 파이프라인: WAV변환 → BasicPitch피치 → 옥타브필터 → 동일음병합 → 짧은음흡수 → 조성감지 → 조성보정 → 재병합 → 템포양자화 → 겹침해소 → 음역대정제 → MIDI생성
 - `core/midi_to_sheet.py` — MIDI→JSON 음표 변환 (music21 기반, 120줄)
-- `core/chord_detector.py` — Krumhansl-Schmuckler 키 감지 + 반마디 단위 다이아토닉 코드 배정 (254줄)
+- `core/chord_detector.py` — autochord Bi-LSTM-CRF 코드 감지 (우선) + Krumhansl-Schmuckler 다이아토닉 폴백 (329줄)
 - `core/lyrics.py` — WhisperX 한국어 가사 추출 + 강제정렬 + 음표 매핑 (~172줄)
 - `core/transposer.py` — 키 변환 + 손상 MIDI 에러핸들링 (187줄)
 - `test.py` — 테스트용 WAV 생성 + API 호출 테스트
@@ -66,7 +66,7 @@ core/lyrics.py
 ### MAJOR (정확도 직결)
 - **BUG-002**: `audio_to_midi.py:322` — 옥타브 중복 제거 O(n²) + median 기반으로 실제 음표 삭제
 - **BUG-003**: `lyrics.py:100` — rest 포함 인덱스 불일치 → 가사 어긋남 (**해결됨**)
-- **BUG-004**: `chord_detector.py` — 다이아토닉 7개만, 7th/sus/세컨더리 없음
+- **BUG-004**: `chord_detector.py` — 다이아토닉 7개만, 7th/sus/세컨더리 없음 (**완화됨**: autochord 딥러닝 감지 추가로 다이아토닉 제한 우회)
 - **BUG-009**: `midi_to_sheet.py:31` — 점음표 리듬 손실 (dotted half→half 등) (**해결됨**)
 - **BUG-011**: `audio_to_midi.py:292` — MIN_NOTE_DURATION=120ms 고정 → 빠른 곡 32분음표 소멸 (**해결됨**)
 - **BUG-012**: `audio_to_midi.py:721` — Whisper 갭 pYIN 임계값 0.05 → 숨소리가 음표로 (**해결됨**)
