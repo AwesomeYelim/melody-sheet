@@ -13,6 +13,9 @@ output/
 *.mp3
 *.mid
 
+# 평가 하베스트 실행 산출물 (dataset은 gen_synthetic.py로 재생성, baseline은 eval/README.md에 기록)
+eval/results/
+
 # Node
 app/node_modules/
 app/.expo/

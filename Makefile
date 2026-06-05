@@ -7,7 +7,7 @@ PORT    := 8000
 NVM_NODE := $(HOME)/.nvm/versions/node/v22.13.0/bin
 export PATH := $(NVM_NODE):$(PATH)
 
-.PHONY: all install build serve run stop clean
+.PHONY: all install build serve run stop clean eval eval-gen
 
 # ── 한 방에 실행 ──────────────────────────────────────────
 all: stop build serve
@@ -42,6 +42,13 @@ run: stop build
 stop:
 	@-lsof -ti:$(PORT) | xargs kill 2>/dev/null; true
 	@echo "🛑 서버 종료"
+
+# ── 평가 하베스트 (U0) ────────────────────────────────────
+eval-gen:
+	$(PYTHON) eval/gen_synthetic.py
+
+eval:
+	$(PYTHON) eval/evaluate.py
 
 # ── 정리 ──────────────────────────────────────────────────
 clean:

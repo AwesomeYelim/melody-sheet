@@ -24,3 +24,6 @@ whisperx>=3.1.0        # WhisperX 음성→텍스트 + 강제정렬 (한국어 �
 
 # 코드 감지
 autochord>=0.1.0       # Bi-LSTM-CRF 오디오 코드 인식 (ISMIR 2021)
+
+# 평가 하베스트 (U0)
+mir_eval>=0.7          # note-level 전사 정확도 (P/R/F-measure)

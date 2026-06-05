@@ -1,3 +1,5 @@
+from __future__ import annotations  # PEP 604 union 애너테이션(`X | None`)을 3.9에서도 허용 (지연 평가, 동작 불변)
+
 import os
 import subprocess
 import tempfile
