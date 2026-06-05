@@ -92,6 +92,11 @@ def _run_basic_pitch(wav_path: str) -> tuple:
             "velocity": int(np.clip(amp * 70 + 40, 40, 110)),
         })
 
+    # Basic Pitch는 note_events를 onset 내림차순으로 반환할 수 있다.
+    # 이후 단계(동일음 병합·짧은음 흡수·시작 오프셋 제거)는 모두 시간순 정렬을
+    # 전제하므로, 여기서 onset 오름차순으로 정렬해 둔다. (U1: onset 정렬)
+    notes.sort(key=lambda n: n["start"])
+
     # RMS 필터 + 템포 추정용 오디오 데이터
     audio_22k, _ = librosa.load(wav_path, sr=22050, mono=True)
     print(f"[AMT] Basic Pitch 음표 추출: {len(notes)}개")
